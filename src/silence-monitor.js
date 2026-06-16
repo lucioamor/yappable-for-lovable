@@ -37,7 +37,8 @@
   let lastDomMutationAt = 0;
   let workAnnounced  = false; // evita re-anunciar "está trabalhando" em loop
   let trackingId     = null;  // data-message-id da mensagem em andamento
-  let taskTitle      = "";
+  let taskTitle      = "";    // meaningful task label (non-noise)
+  let taskStatus     = "";    // state word: "thinking", "working", etc.
   let started        = false;
 
   // ---------------------------------------------------------------------------
@@ -78,14 +79,22 @@
     return null;
   }
 
-  // Cabeçalhos genéricos não identificam a tarefa ("rotulada 'Working...'" é ruído).
-  const RE_TITLE_NOISE = /^(working|thinking|loading|read|edited?|typecheck)\.{0,3}$/i;
+  // Generic status words — informative but don't identify the task.
+  // Split: STATE words (thinking, working) are spoken directly; TOOL words (read, edited) are dropped.
+  const RE_TITLE_STATE = /^(thinking|thought.*|working|loading)\.{0,3}$/i;
+  const RE_TITLE_NOISE = /^(read|edited?|typecheck)\.{0,3}$/i;
 
   function detectTaskTitle() {
     const scope = latestIncompleteMessage() || document;
     const el = scope.querySelector('[aria-label^="Open background task"]');
     const t = el ? cleanStr(el.getAttribute("title") || el.textContent) : "";
-    return RE_TITLE_NOISE.test(t) ? "" : t;
+    if (RE_TITLE_STATE.test(t)) {
+      taskStatus = t.toLowerCase().replace(/\.+$/, "");
+      return "";
+    }
+    if (RE_TITLE_NOISE.test(t)) return "";
+    taskStatus = "";
+    return t;
   }
 
   // Devolve o ID da mensagem mais recente do agente que NÃO tem o botão de
@@ -121,9 +130,17 @@
   }
 
   function taskLabel() {
-    return taskTitle
-      ? `labeled '${taskTitle}'`
-      : "in progress";
+    if (taskTitle) return `labeled '${taskTitle}'`;
+    if (taskStatus) return taskStatus; // "thinking", "working", etc.
+    return "in progress";
+  }
+
+  // Full spoken phrase for the work announcement — avoids "working on a task thinking"
+  function workPhrase() {
+    if (taskTitle) return `Lovable is working on a task labeled '${taskTitle}'.`;
+    if (taskStatus === "thinking") return "Lovable is thinking.";
+    if (taskStatus) return `Lovable is ${taskStatus}.`;
+    return "Lovable is working.";
   }
 
   // Fala se o debounce permitir.
@@ -141,6 +158,7 @@
     workAnnounced = false;
     workStartedAt = Date.now();
     lastDomMutationAt = workStartedAt;
+    taskStatus    = "";
     taskTitle     = detectTaskTitle();
     trackingId    = latestIncompleteId();
   }
@@ -154,6 +172,7 @@
     inSilence     = false;
     workAnnounced = false;
     taskTitle     = "";
+    taskStatus    = "";
     trackingId    = null;
     lastDomMutationAt = 0;
   }
@@ -164,8 +183,8 @@
   function tick() {
     const n = Date.now();
 
-    // Atualiza título se visível
-    const title = detectTaskTitle();
+    // Update title and status in real time
+    const title = detectTaskTitle(); // also sets taskStatus as side effect
     if (title) taskTitle = title;
 
     // Detecção de conclusão via DOM (backup: content.js também chama reset())
@@ -210,7 +229,7 @@
     // Anúncio de "trabalhando" (uma vez, após DEBOUNCE_MS com shimmer ativo)
     if (!workAnnounced && shimmer && elapsed >= DEBOUNCE_MS) {
       workAnnounced = true;
-      trySpeak(`Lovable is working on a task ${taskLabel()}.`);
+      trySpeak(workPhrase());
       return;
     }
 
@@ -253,9 +272,8 @@
       enterWork();
       if (incompleteId) trackingId = incompleteId;
     }
-    // Atualiza título em tempo real
     if (inWork) {
-      const t = detectTaskTitle();
+      const t = detectTaskTitle(); // also sets taskStatus as side effect
       if (t) taskTitle = t;
     }
   });
