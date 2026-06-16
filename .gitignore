@@ -1,0 +1,6 @@
+# Chrome-generated when loading unpacked
+_metadata/
+
+# OS junk
+.DS_Store
+Thumbs.db

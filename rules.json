@@ -1,0 +1,11 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||lovable.dev/audio/generation-complete.mp3",
+      "resourceTypes": ["xmlhttprequest", "media", "other"]
+    }
+  }
+]

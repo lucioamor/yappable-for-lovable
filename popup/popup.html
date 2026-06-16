@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a0a0b;
+      --surface: #111113;
+      --surface-2: #18181b;
+      --border: #27272a;
+      --border-soft: #1f1f23;
+      --border-faint: #1c1c1f;
+      --accent: #f59e0b;
+      --accent-soft: rgba(245, 158, 11, 0.1);
+      --accent-line: rgba(245, 158, 11, 0.45);
+      --val: #facc15;
+      --ok: #86efac;
+      --ok-strong: #22c55e;
+      --danger: #f87171;
+      --txt: #fafafa;
+      --txt-2: #d4d4d8;
+      --muted: #a1a1aa;
+      --muted-2: #71717a;
+      --muted-3: #52525b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      width: 360px; margin: 0; padding: 14px;
+      font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+      background: var(--bg); color: #e5e7eb;
+    }
+    label[title], input[title], button[title], select[title], .switch[title] { cursor: help; }
+
+    select, textarea, input[type="text"], input[type="password"], input[type="number"] {
+      width: 100%; min-height: 32px; padding: 7px 9px;
+      background: var(--surface-2); color: var(--txt); border: 1px solid var(--border); border-radius: 8px;
+      font: inherit;
+    }
+    select { color: var(--txt-2); cursor: pointer; }
+    textarea {
+      display: block; min-height: 60px; resize: vertical;
+      font: 11px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+      background: var(--surface); color: var(--muted);
+    }
+    input[type="range"] { width: 100%; cursor: ew-resize; margin: 0; accent-color: var(--accent); }
+    input:disabled { opacity: .45; cursor: not-allowed; }
+    select:focus-visible, textarea:focus-visible,
+    input[type="text"]:focus-visible, input[type="password"]:focus-visible, input[type="number"]:focus-visible {
+      outline: 2px solid rgba(245, 158, 11, 0.55); outline-offset: 2px;
+    }
+
+    /* ── header ─────────────────────────────────────── */
+    .topbar { display: flex; align-items: center; justify-content: space-between; padding-bottom: 10px; margin: 0 0 12px; border-bottom: 1px solid var(--border-soft); }
+    .header-brand { display: flex; flex-direction: column; gap: 2px; }
+    h1 { margin: 0; color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: 0.2em; line-height: 1.1; text-transform: uppercase; }
+    .status-line { color: var(--muted-3); font-size: 10px; letter-spacing: 0.03em; }
+
+    /* ── generic buttons ────────────────────────────── */
+    button {
+      min-height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 7px 10px; cursor: pointer;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--txt);
+      font: inherit; font-weight: 600;
+      transition: background .15s, border-color .15s, color .15s, transform .1s; will-change: transform;
+    }
+    button:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    button:active { transform: scale(0.97); }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+    button:focus-visible { outline: 2px solid rgba(245, 158, 11, 0.55); outline-offset: 2px; }
+
+    .icon-btn { width: 28px; min-width: 28px; min-height: 28px; padding: 0; border-color: transparent; background: transparent; color: var(--muted-3); }
+    .icon-btn:hover { border-color: transparent; background: transparent; color: var(--muted); }
+
+    .field { display: grid; grid-template-columns: 108px 1fr 46px; align-items: center; gap: 8px; margin: 7px 0; }
+    .field.nv { grid-template-columns: 108px 1fr; }
+    .field > label { margin: 0; font-weight: 500; font-size: 12px; color: var(--txt-2); }
+    .field .rngval { text-align: right; color: var(--val); font-variant-numeric: tabular-nums; font-size: 12px; }
+
+    /* ── hero: on/off (whole-session action) ─────────── */
+    .control { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; box-shadow: inset 0 1px 0 rgba(255,255,255,.025); }
+    .control.hero { padding: 13px 14px; transition: border-color .2s, box-shadow .2s; }
+    .control.hero.on { border-color: var(--accent-line); box-shadow: inset 0 0 0 1px var(--accent-soft), 0 6px 20px -10px rgba(245,158,11,.35); }
+
+    .section-h { font-size: 12.5px; font-weight: 700; color: var(--txt); margin: 16px 0 8px; letter-spacing: .01em; }
+    .section-h .hint { font-weight: 500; color: var(--muted-2); font-size: 11px; }
+
+    .master { display: flex; align-items: center; gap: 10px; }
+    .master label.cap { margin: 0; font-weight: 700; font-size: 14px; flex: 1; color: var(--txt); }
+    .master .state { font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+    .master .state.on { color: var(--ok); }
+    .master .state.off { color: var(--danger); }
+
+    /* verbose toggle row */
+    .subrow { display: flex; align-items: center; gap: 10px; margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--border-soft); }
+    .subrow label { margin: 0; flex: 1; font-weight: 600; font-size: 12.5px; color: var(--txt-2); }
+    .subrow label .sub { font-weight: 500; font-size: 11px; color: var(--muted-2); }
+
+    /* ── switch (track + thumb), amber on ───────────── */
+    .switch { display: flex; align-items: center; gap: 8px; }
+    .switch input[type="checkbox"] {
+      width: 30px; height: 16px; appearance: none; background: #3f3f46; border: 0; border-radius: 999px;
+      position: relative; cursor: pointer; transition: background .15s; flex: none;
+    }
+    .switch input[type="checkbox"]:checked { background: var(--accent); }
+    .switch input[type="checkbox"]::after {
+      content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+      background: var(--muted); border-radius: 50%; transition: transform .18s ease, background .15s;
+    }
+    .switch input[type="checkbox"]:checked::after { transform: translateX(14px); background: var(--bg); }
+    .switch input[type="checkbox"]:focus-visible { outline: 2px solid rgba(245, 158, 11, 0.55); outline-offset: 2px; }
+
+    /* ── voice engine: segmented ─────────────────────── */
+    .segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .seg { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 6px; cursor: pointer;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; font-weight: 600; font-size: 12px; color: var(--muted); transition: all .12s; }
+    .seg:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .seg.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+    .seg .em { font-size: 15px; }
+
+    /* sounds: toggle + mini volume, all inline */
+    .soundline { display: grid; grid-template-columns: 1fr 84px 30px auto; align-items: center; gap: 8px; margin: 9px 0 0; }
+    .soundline:first-child { margin-top: 2px; }
+    .soundline > label { margin: 0; font-weight: 500; font-size: 12px; color: var(--txt-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .minivol { width: 84px; cursor: ew-resize; }
+    .rngval.mini { font-size: 10.5px; color: var(--muted); text-align: right; }
+
+    /* ── narration mode ──────────────────────────────── */
+    .narrlist { display: grid; gap: 6px; margin: 0; }
+    .narrlist input { position: absolute; opacity: 0; pointer-events: none; }
+    .narropt { display: grid; grid-template-columns: 26px 1fr; align-items: center; gap: 8px; padding: 8px 9px; cursor: pointer;
+      background: var(--surface); border: 1px solid var(--border-faint); border-radius: 10px; transition: all .12s; }
+    .narropt:hover { border-color: var(--border); }
+    .narropt .em { font-size: 17px; text-align: center; }
+    .narropt .nm { font-weight: 600; font-size: 12px; color: var(--txt); }
+    .narropt .ds { font-size: 10.5px; color: var(--muted-2); line-height: 1.2; }
+    .narrlist input:checked + .narropt { border-color: var(--accent-line); background: var(--accent-soft); }
+    .narrlist input:checked + .narropt .nm { color: var(--accent); }
+    .narrlist input:focus-visible + .narropt { outline: 2px solid rgba(245, 158, 11, 0.55); outline-offset: 2px; }
+
+    /* ── voice panel (driven by segmented, no tabs) ──── */
+    .vpanel { margin-top: 12px; }
+    .vpanel[hidden] { display: none; }
+
+    fieldset { border: 0; margin: 0; padding: 0; }
+
+    /* ── collapsible config groups ───────────────────── */
+    details.cfg { margin-top: 10px; border: 1px solid var(--border-faint); border-radius: 10px; background: var(--surface); }
+    details.cfg > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 9px 11px; user-select: none; }
+    details.cfg > summary::-webkit-details-marker { display: none; }
+    details.cfg > summary::before { content: "▸"; color: var(--muted-3); transition: transform .15s; flex: none; }
+    details.cfg[open] > summary::before { transform: rotate(90deg); }
+    details.cfg > summary:hover .cfg-ttl { color: var(--txt); }
+    .cfg-ttl { font-size: 11.5px; font-weight: 600; letter-spacing: .01em; color: var(--txt-2); transition: color .15s; }
+    .cfg-state { margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted-2); font-variant-numeric: tabular-nums; transition: opacity .15s; }
+    details.cfg[open] > summary .cfg-state { opacity: .4; }
+    .cfg-body { padding: 2px 11px 12px; }
+    .sumchip { opacity: .3; filter: grayscale(1); font-size: 12px; transition: opacity .15s, filter .15s; }
+    .sumchip.on { opacity: 1; filter: none; }
+
+    /* ── collapsed debug ─────────────────────────────── */
+    details.debug { margin-top: 10px; border: 1px solid var(--border-faint); border-radius: 10px; background: var(--surface); }
+    details.debug > summary { list-style: none; cursor: pointer; padding: 8px 11px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-2); display: flex; align-items: center; gap: 6px; user-select: none; }
+    details.debug > summary::-webkit-details-marker { display: none; }
+    details.debug > summary::before { content: "▸"; color: var(--muted-3); transition: transform .15s; }
+    details.debug[open] > summary::before { transform: rotate(90deg); }
+    details.debug > summary:hover { color: var(--muted); }
+    details.debug .readdebug { padding: 0 11px 11px; }
+    .readdebug { margin-top: 0; display: grid; gap: 7px; }
+    .readdebug label { display: block; margin: 0 0 3px; font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-2); }
+
+    .btnrow { display: flex; gap: 8px; margin-top: 12px; }
+    button.act { flex: 1; }
+    button.act.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+    button.act.primary:hover { background: #fbbf24; border-color: #fbbf24; color: var(--bg); }
+    button.ghost { background: var(--surface-2); color: var(--txt); }
+    button.mini { flex: none; padding: 5px 9px; font-size: 12px; min-height: 28px; }
+    small { color: var(--muted-2); font-size: 11px; }
+    #msg { margin-top: 8px; min-height: 14px; color: var(--val); font-size: 11px; }
+
+    .voicerow { display: grid; grid-template-columns: 108px 1fr 36px; align-items: center; gap: 8px; margin: 7px 0; }
+    .voicerow > label { margin: 0; font-weight: 500; font-size: 12px; color: var(--txt-2); }
+
+    .keystatus { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
+    .keystatus .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex: none; }
+    .keystatus .dot.ok { background: var(--ok-strong); }
+    .keystatus .txt { flex: 1; font-size: 12px; color: var(--muted); }
+
+    /* affiliate links */
+    a.affiliate { display: block; margin: 6px 0 2px; padding: 8px 10px; font-size: 11.5px; text-decoration: none;
+      color: var(--txt-2); background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 8px; transition: background .15s, border-color .15s; }
+    a.affiliate:hover { background: rgba(245, 158, 11, 0.16); border-color: var(--accent); }
+    a.affiliate strong { color: var(--accent); font-weight: 700; }
+    a.affiliate[hidden] { display: none; }
+    .affiliate-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0 2px; }
+    .affiliate-row a.affiliate { margin: 0; }
+
+    /* ── language dropdown ───────────────────────────── */
+    .langbar { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 8px; margin: 4px 0 8px; }
+    .langbar > label { margin: 0; font-weight: 600; font-size: 12px; color: var(--txt-2); }
+    .dropdown { position: relative; }
+    .dd-btn { width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 9px; cursor: pointer;
+      background: var(--surface-2); color: var(--txt); border: 1px solid var(--border); border-radius: 8px; font: inherit; font-weight: 500; text-align: left; min-height: 32px; }
+    .dd-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .dd-btn::after { content: "▾"; margin-left: auto; color: var(--muted-2); }
+    .flag-pill { width: 28px; min-width: 28px; height: 16px; display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 4px; background: var(--border); color: var(--txt-2); font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+    .dd-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 5; max-height: 240px; overflow: auto;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.5); padding: 4px; }
+    .dd-list[hidden] { display: none; }
+    .dd-opt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer; border-radius: 6px; }
+    .dd-opt:hover, .dd-opt.sel { background: var(--accent-soft); }
+    .dd-list::-webkit-scrollbar { width: 5px; }
+    .dd-list::-webkit-scrollbar-thumb { background: #2d2d31; border-radius: 8px; }
+
+    .inline { display: flex; align-items: center; gap: 8px; margin: 9px 0 0; }
+    .inline label { margin: 0; font-weight: 500; color: var(--txt-2); }
+    .inline input[type="checkbox"] { flex: none; accent-color: var(--accent); }
+
+    /* ── modal ───────────────────────────────────────── */
+    .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: grid; place-items: center; padding: 18px; z-index: 20; }
+    .modal-bg[hidden] { display: none; }
+    .modal { background: var(--surface); border: 1px solid #2d2d31; border-radius: 12px; padding: 16px; width: min(320px, 100%); max-height: 92vh; overflow: auto;
+      box-shadow: 0 24px 56px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.03); }
+    .modal h2 { font-size: 12px; margin: 0 0 4px; color: var(--accent); letter-spacing: .1em; text-transform: uppercase; }
+    .modal h3 { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-2); margin: 14px 0 4px; font-weight: 600; }
+    .keyinput { display: flex; gap: 6px; }
+    .keyinput input { flex: 1; }
+    .privacy-note { background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 8px 10px; font-size: 11px; color: var(--muted); line-height: 1.5; margin: 4px 0 8px; }
+    .privacy-note strong { color: var(--txt-2); }
+    .modal::-webkit-scrollbar { width: 5px; }
+    .modal::-webkit-scrollbar-thumb { background: #2d2d31; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="header-brand">
+      <h1>Yappable</h1>
+      <span class="status-line">Lovable turn narration</span>
+    </div>
+    <div class="header-actions">
+      <button class="icon-btn" id="openSettings" title="Language, API key, and advanced settings.">⚙</button>
+    </div>
+  </div>
+
+  <!-- hero: on/off + verbose (whole-session actions) -->
+  <div class="control hero" id="masterCard">
+    <div class="master" title="Enable or disable narration. Turning off stops any ongoing speech immediately.">
+      <label class="cap" for="enabled">Narration</label>
+      <span class="state" id="enabledState"></span>
+      <div class="switch"><input type="checkbox" id="enabled" /></div>
+    </div>
+    <div class="subrow" title="Read progress updates aloud while Lovable is working (e.g. 'Applying preloads now'). Independent of final narration.">
+      <label for="verboseEnabled">🗣️ Verbose mode <span class="sub">— reads progress</span></label>
+      <div class="switch"><input type="checkbox" id="verboseEnabled" /></div>
+    </div>
+  </div>
+
+  <!-- primary: what to read each turn -->
+  <div class="section-h" title="How much of the response to read when Lovable finishes.">Narration mode <span class="hint">— what to read each turn</span></div>
+  <fieldset class="narrlist">
+    <label><input type="radio" name="mode" value="fast" /><span class="narropt"><span class="em">⚡</span><span><span class="nm">Fast</span><br><span class="ds">Only what depends on you now: the pending decision or question. If nothing is pending, says you're clear to continue.</span></span></span></label>
+    <label><input type="radio" name="mode" value="beginner" /><span class="narropt"><span class="em">🌱</span><span><span class="nm">Beginner</span><br><span class="ds">Plain-language summary translating technical details into practical impact. (default)</span></span></span></label>
+    <label><input type="radio" name="mode" value="advanced" /><span class="narropt"><span class="em">🛠️</span><span><span class="nm">Advanced</span><br><span class="ds">Dense technical summary: verdict, risks, and the pending decision, keeping the terms.</span></span></span></label>
+    <label><input type="radio" name="mode" value="completo" /><span class="narropt"><span class="em">📄</span><span><span class="nm">Full</span><br><span class="ds">Reads the entire agent response, uncut.</span></span></span></label>
+  </fieldset>
+
+  <!-- sounds: cue + error alert, toggle and inline volume -->
+  <details class="cfg" id="cfgSounds" open>
+    <summary title="Short sound before narration and error chime. Toggle and volume inline.">
+      <span class="cfg-ttl">Sounds &amp; alerts</span>
+      <span class="cfg-state" id="soundsState"></span>
+    </summary>
+    <div class="cfg-body">
+      <div class="soundline" title="Plays a short notification sound before narration.">
+        <label for="cueEnabled">🔔 Sound before speech</label>
+        <input type="range" id="cueVolume" class="minivol" min="0" max="1" step="0.05" title="Cue volume" />
+        <span class="rngval mini" id="cueVolumeOut">0.80</span>
+        <div class="switch"><input type="checkbox" id="cueEnabled" /></div>
+      </div>
+      <div class="soundline" title="Plays an attention chime when Lovable shows an error requiring a click on 'Try to fix'.">
+        <label for="errorAlertEnabled">🚨 Error alert</label>
+        <input type="range" id="errorVolume" class="minivol" min="0" max="1" step="0.05" title="Error alert volume" />
+        <span class="rngval mini" id="errorVolumeOut">0.40</span>
+        <div class="switch"><input type="checkbox" id="errorAlertEnabled" /></div>
+      </div>
+    </div>
+  </details>
+
+  <!-- voice & engine config (set-once, collapsed) -->
+  <details class="cfg" id="cfgVoice">
+    <summary title="Who generates the speech and voice parameters. Set once.">
+      <span class="cfg-ttl">Voice &amp; engine</span>
+      <span class="cfg-state" id="voiceState"></span>
+    </summary>
+    <div class="cfg-body">
+  <div class="segmented">
+    <div class="seg" id="segNative" data-engine="native"><span class="em">🔊</span> Native</div>
+    <div class="seg" id="segEleven" data-engine="elevenlabs"><span class="em">☁️</span> ElevenLabs</div>
+  </div>
+
+  <!-- NATIVE VOICE -->
+  <section class="vpanel" id="panelNative">
+    <div class="field nv" title="System-installed voice. Auto = best match for the language selected in ⚙ Settings.">
+      <label for="nativeVoice">Voice</label>
+      <select id="nativeVoice"><option value="">Auto</option></select>
+    </div>
+
+    <div class="field" title="Speech rate. 1.00 = normal.">
+      <label for="rate">Speed</label>
+      <input type="range" id="rate" min="0.5" max="2" step="0.05" />
+      <span class="rngval" id="rateOut">1.05</span>
+    </div>
+
+    <div class="field" title="Pitch. 1.00 = natural.">
+      <label for="pitch">Pitch</label>
+      <input type="range" id="pitch" min="0" max="2" step="0.1" />
+      <span class="rngval" id="pitchOut">1.00</span>
+    </div>
+
+    <div class="field" title="Native voice volume.">
+      <label for="volume">Volume</label>
+      <input type="range" id="volume" min="0" max="1" step="0.05" />
+      <span class="rngval" id="volumeOut">1.00</span>
+    </div>
+
+    <div class="btnrow">
+      <button class="act ghost" id="testNative" title="Play sample phrase with the native voice.">▶ Test</button>
+      <button class="act ghost mini" id="resetNative" title="Reset voice, speed, pitch, and volume to defaults.">↺ Reset</button>
+    </div>
+  </section>
+
+  <!-- ELEVENLABS -->
+  <section class="vpanel" id="panelEleven" hidden>
+    <div class="voicerow" title="Voices from your account (cached). Use ↻ if you add new voices. Configure the API key in ⚙ Settings.">
+      <label for="elevenVoiceId">Voice</label>
+      <select id="elevenVoiceId"><option value="">— no voices —</option></select>
+      <button class="ghost mini" id="refreshVoices" title="Reload voices from the API (bypass cache).">↻</button>
+    </div>
+
+    <div class="field nv" title="Generation model. Multilingual = quality; Turbo/Flash = fast and cheap.">
+      <label for="elevenModel">Model</label>
+      <select id="elevenModel">
+        <option value="eleven_multilingual_v2">Multilingual v2</option>
+        <option value="eleven_turbo_v2_5">Turbo v2.5</option>
+        <option value="eleven_flash_v2_5">Flash v2.5</option>
+        <option value="eleven_v3">v3 (alpha)</option>
+      </select>
+    </div>
+
+    <div class="field" title="Voice consistency. Low = expressive/variable; High = flat/predictable.">
+      <label for="elevenStability">Stability</label>
+      <input type="range" id="elevenStability" min="0" max="1" step="0.01" />
+      <span class="rngval" id="stabOut">0.50</span>
+    </div>
+
+    <div class="field" title="How closely it mimics the original voice. High = more faithful to the cloned voice.">
+      <label for="elevenSimilarity">Similarity</label>
+      <input type="range" id="elevenSimilarity" min="0" max="1" step="0.01" />
+      <span class="rngval" id="simOut">0.75</span>
+    </div>
+
+    <div class="field" title="Style/emotion exaggeration (v2+). Higher = more dramatic, less stable.">
+      <label for="elevenStyle">Style</label>
+      <input type="range" id="elevenStyle" min="0" max="1" step="0.01" />
+      <span class="rngval" id="styleOut">0.00</span>
+    </div>
+
+    <div class="field" title="Speech rate (0.7 to 1.2). 1.00 = normal.">
+      <label for="elevenSpeed">Speed</label>
+      <input type="range" id="elevenSpeed" min="0.7" max="1.2" step="0.01" />
+      <span class="rngval" id="elevenSpeedOut">1.00</span>
+    </div>
+
+    <div class="inline" title="Reinforces similarity to the original voice and clarity, at a slight latency cost.">
+      <input type="checkbox" id="elevenSpeakerBoost" /> <label for="elevenSpeakerBoost">Speaker boost</label>
+    </div>
+
+    <div class="btnrow">
+      <button class="act ghost" id="testEleven" title="Play sample phrase with the ElevenLabs voice. Consumes credits.">▶ Test</button>
+      <button class="act ghost mini" id="resetEleven" title="Reset ElevenLabs parameters to defaults.">↺ Reset</button>
+    </div>
+  </section>
+    </div>
+  </details>
+
+  <!-- debug (collapsed) -->
+  <details class="debug">
+    <summary>Debug — observed output &amp; read text</summary>
+    <div class="readdebug">
+      <div>
+        <label for="observedOutput">Observed output</label>
+        <textarea id="observedOutput" readonly placeholder="Waiting for Lovable output..."></textarea>
+      </div>
+      <div>
+        <label for="readText">Read text</label>
+        <textarea id="readText" readonly placeholder="Waiting for narrated text..."></textarea>
+      </div>
+    </div>
+  </details>
+
+  <div id="msg"></div>
+
+  <!-- SETTINGS MODAL -->
+  <div class="modal-bg" id="settingsModal" hidden>
+    <div class="modal">
+      <h2>Settings</h2>
+
+      <h3>Language</h3>
+      <div class="langbar" title="Language used by BOTH engines (native voice and ElevenLabs).">
+        <label>Language</label>
+        <div class="dropdown" id="langDrop">
+          <button type="button" class="dd-btn" id="langBtn"></button>
+          <div class="dd-list" id="langList" hidden></div>
+        </div>
+      </div>
+
+      <h3>ElevenLabs API key</h3>
+      <div class="keystatus">
+        <span class="dot" id="keyDot"></span>
+        <span class="txt" id="keyTxt">No API key</span>
+      </div>
+      <div class="keyinput">
+        <input type="password" id="elevenKey" placeholder="xi-api-key..." />
+        <button class="ghost mini" id="keyReveal" title="Show/hide">👁</button>
+      </div>
+      <a id="keyAffiliate" class="affiliate" href="https://nxlv.ai/elevenlabs?utm_source=yappable" target="_blank" rel="noopener noreferrer" hidden>
+        Don't have a key yet? <strong>Create an ElevenLabs account →</strong>
+      </a>
+      <small>Stored in <strong>storage.local</strong> — not synced across devices.</small>
+
+      <h3>Privacy</h3>
+      <div class="privacy-note">
+        🔒 <strong>Local by default.</strong> Native speech and Nano summaries run in the browser.<br>
+        ☁️ <strong>ElevenLabs (optional):</strong> only the final speech text is sent to generate audio when that engine is active.
+      </div>
+
+      <h3>Links</h3>
+      <div class="privacy-note">
+        Links to Lovable and ElevenLabs may be affiliate links. This does not affect the extension's local functionality.
+      </div>
+      <div class="affiliate-row">
+        <a class="affiliate" href="https://nxlv.ai/lovable?utm_source=yappable" target="_blank" rel="noopener noreferrer">
+          <strong>Lovable →</strong>
+        </a>
+        <a class="affiliate" href="https://nxlv.ai/elevenlabs?utm_source=yappable" target="_blank" rel="noopener noreferrer">
+          <strong>ElevenLabs →</strong>
+        </a>
+      </div>
+
+      <h3>Narration</h3>
+      <div class="field" title="Wait time between detecting completion and starting speech (lets the DOM settle).">
+        <label for="delayMs">Delay (ms)</label>
+        <input type="range" id="delayMs" min="0" max="100" step="10" />
+        <span class="rngval" id="delayMsOut">50</span>
+      </div>
+
+      <h3>ElevenLabs advanced</h3>
+      <div class="field nv" title="Audio format/bitrate. Higher bitrate = better quality and more credits.">
+        <label for="elevenOutputFormat">Format</label>
+        <select id="elevenOutputFormat">
+          <option value="mp3_22050_32">MP3 22.05k / 32kbps</option>
+          <option value="mp3_44100_32">MP3 44.1k / 32kbps</option>
+          <option value="mp3_44100_64">MP3 44.1k / 64kbps</option>
+          <option value="mp3_44100_96">MP3 44.1k / 96kbps</option>
+          <option value="mp3_44100_128">MP3 44.1k / 128kbps</option>
+          <option value="mp3_44100_192">MP3 44.1k / 192kbps (Creator+)</option>
+        </select>
+      </div>
+      <div class="field nv" title="Text normalization (numbers, dates, symbols). auto = decide; on = force; off = faster.">
+        <label for="elevenTextNormalization">Normalization</label>
+        <select id="elevenTextNormalization">
+          <option value="auto">Auto</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
+      </div>
+      <div class="inline" title="Fixed seed = deterministic output. Disable 'Random' to fix a seed.">
+        <input type="checkbox" id="elevenSeedRandom" /> <label for="elevenSeedRandom">Random seed</label>
+      </div>
+      <div class="field nv" title="Deterministic seed (0 to 4294967295). Only used when 'Random' is disabled.">
+        <label for="elevenSeed">Seed</label>
+        <input type="number" id="elevenSeed" min="0" max="4294967295" step="1" placeholder="—" />
+      </div>
+
+      <div class="btnrow">
+        <button class="act primary" id="settingsClose">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../src/risk-detector.js"></script>
+  <script src="../src/ir-builder.js"></script>
+  <script src="../src/renderer.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
