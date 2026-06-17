@@ -16,8 +16,6 @@
 (function (root) {
   "use strict";
 
-  const SEVERITY_WEIGHT = { high: 3, medium: 2, low: 1 };
-
   // Legacy -> new mode mapping (old configs may still send these values).
   const MODES = ["fast", "beginner", "advanced", "completo"];
   const LEGACY_TO_MODE = {
@@ -102,23 +100,6 @@
     return cleaned.join(sep);
   }
 
-  function certaintyLabel(certainty) {
-    const en = _isEn();
-    if (certainty === "observed") return en ? "Observed" : "Observado";
-    if (certainty === "inferred") return en ? "Inferred" : "Inferido";
-    // "needs_validation" é o estado PADRÃO (nada é validado por regex) — rotular
-    // cada slot com "Não validado:" vira redundante e repetitivo. Omite o rótulo;
-    // o próprio texto do risco já comunica que precisa de conferência.
-    if (certainty === "needs_validation") return "";
-    return "";
-  }
-
-  function slotText(slot) {
-    const label = certaintyLabel(slot && slot.certainty);
-    const text = clean(slot && slot.text);
-    return label && text ? `${label}: ${text}` : text;
-  }
-
   function taskTitleOf(ir) {
     return clean(ir._taskTitle || "");
   }
@@ -137,35 +118,10 @@
     return clean(body.split(/[.\n]/).find(Boolean) || fallback);
   }
 
-  // budget: "brief" (só a ressalva mais grave, se high) | "normal" (a mais
-  // grave + contagem do resto) | "full" (todas, sem omitir nada)
-  function certaintySuffix(ir, budget) {
-    const riskSlots = (ir.slots && ir.slots.risk) || [];
-    const en = _isEn();
-
-    if (!riskSlots.length) return "";
-
-    const sorted = [...riskSlots].sort(
-      (a, b) => (SEVERITY_WEIGHT[b.severity] || 0) - (SEVERITY_WEIGHT[a.severity] || 0)
-    );
-
-    if (budget === "brief") {
-      const top = sorted[0];
-      return top.severity === "high" ? slotText(top) : "";
-    }
-
-    const [top, ...rest] = sorted;
-    const parts = [slotText(top)];
-
-    if (budget === "full") {
-      parts.push(...rest.map(slotText));
-    }
-
-    return parts.join(" ");
-  }
-
-  // RESUMO: lead curto (seções ou intro), o "Esperado:" e a ressalva mais
-  // forte. O Nano (content.js) só entra quando nem isso tem estrutura.
+  // RESUMO: lead curto (seções ou intro) + o "Esperado:". Avisos canned de risco
+  // foram removidos da fala (o sistema interpreta o contexto via LLM no
+  // content.js; o determinístico só lê o que está na mensagem, sem prescrever).
+  // O Nano (content.js) só entra quando nem isso tem estrutura.
   function renderResumo(ir) {
     const headings = sectionHeadings(ir);
     const intro = introOf(ir);
@@ -174,8 +130,7 @@
     // Escala". Títulos entram só quando não há intro.
     const lead = intro || headings || taskTitleOf(ir) || bodyFallback(ir);
     const exp = normTokens(ir._expected || "", "natural");
-    const suffix = certaintySuffix(ir, "normal");
-    return join([lead, exp, suffix]);
+    return join([lead, exp]);
   }
 
   // COMPLETO: lê a resposta inteira — intro, cada seção (título + itens),
@@ -192,8 +147,6 @@
     }
     const exp = normTokens(ir._expected || "", "compact");
     if (exp) parts.push(exp);
-    const suffix = certaintySuffix(ir, "full");
-    if (suffix) parts.push(suffix);
     return join(parts) || normTokens(ir._body || ir._taskTitle, "compact");
   }
 
