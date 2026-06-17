@@ -1419,6 +1419,79 @@
     drain();
   }
 
+  // ---------------------------------------------------------------------------
+  // Tradução de progresso para o idioma do usuário (cfg.lang).
+  // OBJETIVO DA INTERFACE: a fala SEMPRE sai no idioma escolhido no onboarding,
+  // independente do idioma da tela. O Lovable mistura idiomas (PT/EN); estes
+  // snippets de status NUNCA podem ser falados em outra língua. Tradução fiel —
+  // NÃO resume, não acrescenta, não corta. Motor on-device (Prompt API, já
+  // aquecido); cache por (idioma, texto). Sem modelo disponível -> devolve
+  // verbatim (degradação; nunca trava a fala).
+  // ---------------------------------------------------------------------------
+  const _i18nCache = new Map(); // (lang\ntexto) -> tradução
+  const I18N_CACHE_MAX = 60;
+
+  async function localizeLine(text) {
+    const t = cleanText(text);
+    if (!t) return text;
+    const lang = cfg.lang;
+    const key = lang + "\n" + t;
+    if (_i18nCache.has(key)) return _i18nCache.get(key);
+    if (!promptModelReady || !("LanguageModel" in self)) return text; // sem motor
+    const label = langLabel(lang);
+    const system =
+      `You are a translator. Translate the user's text into ${label}. ` +
+      "Output ONLY the translation — no quotes, no notes, no explanation. Preserve the meaning " +
+      "exactly: do NOT summarize, add, or omit anything. Keep it natural to be spoken aloud. " +
+      `If the text is already entirely in ${label}, return it unchanged. ` +
+      "Keep product names, file names, and code identifiers as-is.";
+    const outLang = langCode(lang) || "en";
+    let session = null;
+    try {
+      const baseOpts = { initialPrompts: [{ role: "system", content: system }] };
+      const create = () =>
+        Promise.race([
+          self.LanguageModel.create(
+            _promptLangOptsOk ? { ...baseOpts, outputLanguage: outLang } : baseOpts
+          ),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("translate create timeout")), NANO_TIMEOUT))
+        ]);
+      try {
+        session = await create();
+      } catch (e) {
+        if (_promptLangOptsOk) { _promptLangOptsOk = false; session = await create(); }
+        else throw e;
+      }
+      const out = await Promise.race([
+        session.prompt(t),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("translate timeout")), NANO_TIMEOUT))
+      ]);
+      const res = cleanText(out) || text;
+      if (_i18nCache.size >= I18N_CACHE_MAX) _i18nCache.delete(_i18nCache.keys().next().value);
+      _i18nCache.set(key, res);
+      return res;
+    } catch (err) {
+      console.warn("[Yappable] translate failed, verbatim:", err);
+      return text;
+    } finally {
+      if (session) { try { session.destroy(); } catch (_) {} }
+    }
+  }
+
+  // Enfileira progresso TRADUZIDO. Async: guarda de sequência (descarta a
+  // tradução de um estado obsoleto se outro chegou enquanto traduzia) + guarda de
+  // epoch (não fala progresso depois que a conclusão final preemptou via
+  // stopSpeaking). Mantém o single-slot do enqueueVerbose.
+  let verboseSeq = 0;
+  function enqueueVerboseLocalized(text) {
+    const token = ++verboseSeq;
+    const epoch = playbackEpoch;
+    localizeLine(text).then((out) => {
+      if (token !== verboseSeq || epoch !== playbackEpoch) return;
+      enqueueVerbose(out);
+    });
+  }
+
   // Estado do widget de task: rótulo (título) é lido UMA vez; a descrição é lida
   // a cada mudança, sem repetir o rótulo.
   let lastTaskTitle = "";
@@ -1434,12 +1507,12 @@
       lastTaskTitle = w.title;
       lastTaskDesc = w.desc || "";
       const lead = `Current task: ${w.title}.`;
-      enqueueVerbose(w.desc ? `${lead} ${w.desc}` : lead);
+      enqueueVerboseLocalized(w.desc ? `${lead} ${w.desc}` : lead);
       return;
     }
     if (w.desc && w.desc !== lastTaskDesc) {
       lastTaskDesc = w.desc;
-      enqueueVerbose(w.desc);
+      enqueueVerboseLocalized(w.desc);
     }
   }
 
@@ -1459,7 +1532,7 @@
     if (Date.now() - lastVerboseAt < VERBOSE_MIN_INTERVAL) return;
     lastVerbose = snippet;
     lastVerboseAt = Date.now();
-    enqueueVerbose(snippet);
+    enqueueVerboseLocalized(snippet);
   }
 
   // ---------------------------------------------------------------------------
