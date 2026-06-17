@@ -15,13 +15,13 @@ const DEFAULTS = {
   errorVolume: 0.4,
   verboseEnabled: false,
   elevenKey: "",
-  elevenVoiceId: "21m00Tcm4TlvDq8ikWAM",
-  elevenModel: "eleven_multilingual_v2",
+  elevenVoiceId: "cgSgspJ2msm6clMCkdW9", // Jessica (default voice, expressiva/playful)
+  elevenModel: "eleven_flash_v2_5",
   elevenOutputFormat: "mp3_44100_64",
-  elevenStability: 0.5,
-  elevenSimilarity: 0.75,
-  elevenStyle: 0.0,
-  elevenSpeed: 1.0,
+  elevenStability: 0.2,
+  elevenSimilarity: 0.2,
+  elevenStyle: 0.5,
+  elevenSpeed: 1.1,
   elevenSpeakerBoost: true,
   elevenTextNormalization: "on",
   elevenSeedRandom: true,
@@ -165,6 +165,8 @@ function reflectEngine() {
   $("segEleven").classList.toggle("on", eleven);
   $("panelNative").hidden = eleven;
   $("panelEleven").hidden = !eleven;
+  const badge = $("engineBadge");
+  if (badge) badge.textContent = eleven ? "☁️ ElevenLabs" : "🔊 Native";
   reflectSummaries();
 }
 
@@ -177,16 +179,6 @@ function reflectSummaries() {
     const cc = (LANGS.find((l) => l[0] === resolveLang(cfg.lang)) || LANGS[0])[1].toUpperCase();
     vs.textContent = `${eng} · ${cc}`;
   }
-  const ss = $("soundsState");
-  if (ss) {
-    ss.replaceChildren();
-    for (const [icon, on] of [["🔔", cfg.cueEnabled], ["🚨", cfg.errorAlertEnabled]]) {
-      const c = document.createElement("span");
-      c.className = on ? "sumchip on" : "sumchip";
-      c.textContent = icon;
-      ss.appendChild(c);
-    }
-  }
 }
 function setEngine(engine) {
   if (cfg.engine === engine) return;
@@ -195,6 +187,15 @@ function setEngine(engine) {
 }
 $("segNative").addEventListener("click", () => setEngine("native"));
 $("segEleven").addEventListener("click", () => setEngine("elevenlabs"));
+
+// badge do herói: abre o grupo Voice & engine e rola até ele (atalho pro seletor)
+$("engineBadge").addEventListener("click", () => {
+  const d = $("cfgVoice");
+  if (d) {
+    d.open = true;
+    d.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+});
 
 // Trocar o modo: atualiza o texto lido E renarra com o motor ativo (o usuário
 // pediu ouvir o modo no ato — respeitando o engine escolhido).
@@ -264,18 +265,8 @@ function reflectSeed() { $("elevenSeed").disabled = cfg.elevenSeedRandom; }
 function buildLangDropdown() {
   const list = $("langList");
   list.replaceChildren();
-  // opção padrão: detecta o idioma pelo navegador
-  const autoOpt = document.createElement("div");
-  autoOpt.className = "dd-opt";
-  autoOpt.dataset.code = "auto";
-  const autoFlag = document.createElement("span");
-  autoFlag.className = "flag-pill";
-  autoFlag.textContent = "🌐";
-  const autoLabel = document.createElement("span");
-  autoLabel.textContent = "Auto-detect";
-  autoOpt.append(autoFlag, autoLabel);
-  autoOpt.addEventListener("click", () => { set("lang", "auto"); reflectLang(); $("langList").hidden = true; });
-  list.appendChild(autoOpt);
+  // sem opção "auto" explícita: o idioma detectado já entra pré-selecionado na
+  // lista (resolvido em load()). O usuário só vê idiomas concretos para marcar.
   for (const [code, cc, name] of LANGS) {
     const o = document.createElement("div");
     o.className = "dd-opt";
@@ -291,20 +282,16 @@ function buildLangDropdown() {
   }
 }
 function reflectLang() {
+  const resolved = resolveLang(cfg.lang);
   const flag = document.createElement("span");
   flag.className = "flag-pill";
-  const label = document.createElement("span");
-  if (cfg.lang === "auto") {
-    const [, , name] = LANGS.find((l) => l[0] === resolveLang("auto")) || LANGS[2];
-    flag.textContent = "🌐";
-    label.textContent = `Auto · ${name}`;
-  } else {
-    const [, cc, name] = LANGS.find((l) => l[0] === cfg.lang) || LANGS[0];
-    flag.textContent = cc;
-    label.textContent = name;
-  }
-  $("langBtn").replaceChildren(flag, label);
-  $("langList").querySelectorAll(".dd-opt").forEach((o) => o.classList.toggle("sel", o.dataset.code === cfg.lang));
+  const [, cc] = LANGS.find((l) => l[0] === resolved) || LANGS[0];
+  flag.textContent = cc;
+  // topbar pill: só a bandeira (compacto); o nome aparece na lista aberta.
+  $("langBtn").replaceChildren(flag);
+  $("langBtn").title = (LANGS.find((l) => l[0] === resolved) || LANGS[0])[2];
+  $("langList").querySelectorAll(".dd-opt").forEach((o) => o.classList.toggle("sel", o.dataset.code === resolved));
+  populateNativeVoices(); // lista de vozes nativas segue o idioma
   reflectSummaries();
 }
 $("langBtn").addEventListener("click", (e) => { e.stopPropagation(); $("langList").hidden = !$("langList").hidden; });
@@ -342,22 +329,44 @@ $("elevenKey").addEventListener("change", () => {
 // ---------------------------------------------------------------------------
 // Vozes nativas (Web Speech API)
 // ---------------------------------------------------------------------------
+const normLang = (l) => String(l || "").toLowerCase().replace(/_/g, "-");
+// ordena por provedor: Google > Microsoft/Natural > resto (mesma heurística do content.js)
+function rankVoice(v) {
+  if (/google/i.test(v.name)) return 0;
+  if (/microsoft|natural/i.test(v.name)) return 1;
+  return 2;
+}
 function populateNativeVoices() {
   const sel = $("nativeVoice");
+  if (!sel) return;
   const cur = cfg.nativeVoice;
-  const voices = speechSynthesis.getVoices();
+  const all = speechSynthesis.getVoices();
+  const want = normLang(resolveLang(cfg.lang)); // ex.: "pt-br"
+  const base = want.split("-")[0];
+
+  // só vozes do idioma selecionado: região exata tem prioridade; senão mesmo
+  // idioma em qualquer região. Sem match (idioma não instalado) -> mostra todas
+  // pra não travar o usuário.
+  const exactRegion = all.filter((v) => normLang(v.lang) === want);
+  const sameBase = all.filter((v) => normLang(v.lang).split("-")[0] === base);
+  let list = exactRegion.length ? exactRegion : sameBase;
+  let noMatch = false;
+  if (!list.length) { list = all; noMatch = true; }
+  list = [...list].sort((a, b) => rankVoice(a) - rankVoice(b));
+
   sel.replaceChildren();
   const auto = document.createElement("option");
   auto.value = "";
-  auto.textContent = "Auto";
+  auto.textContent = "Auto (best match)";
   sel.appendChild(auto);
-  for (const v of voices) {
+  for (const v of list) {
     const o = document.createElement("option");
     o.value = v.name;
-    o.textContent = `${v.name} (${v.lang})`;
+    o.textContent = noMatch ? `${v.name} (${v.lang})` : v.name;
     sel.appendChild(o);
   }
-  sel.value = cur;
+  // mantém a escolha do usuário só se ainda válida para este idioma; senão Auto.
+  sel.value = list.some((v) => v.name === cur) ? cur : "";
 }
 speechSynthesis.onvoiceschanged = populateNativeVoices;
 
@@ -445,60 +454,6 @@ function testNative() {
   u.onend = () => msg("");
 }
 
-async function testEleven() {
-  stopAll();
-  if (!cfg.elevenKey) { msg("Configure the API key (⚙ Settings)."); return; }
-  if (!cfg.elevenVoiceId) { msg("Select a voice."); return; }
-  msg("Generating ElevenLabs audio…");
-  try {
-    const fmtParam = cfg.elevenOutputFormat || "mp3_44100_64";
-    const body = {
-      text: SAMPLE,
-      model_id: cfg.elevenModel,
-      voice_settings: {
-        stability: cfg.elevenStability,
-        similarity_boost: cfg.elevenSimilarity,
-        style: cfg.elevenStyle,
-        speed: cfg.elevenSpeed,
-        use_speaker_boost: cfg.elevenSpeakerBoost
-      },
-      apply_text_normalization: cfg.elevenTextNormalization || "auto"
-    };
-    if (LANG_MODELS.test(cfg.elevenModel)) body.language_code = langCode(resolveLang(cfg.lang));
-    if (!cfg.elevenSeedRandom && cfg.elevenSeed != null) body.seed = cfg.elevenSeed;
-
-    const res = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${cfg.elevenVoiceId}?output_format=${fmtParam}`,
-      {
-        method: "POST",
-        headers: { "xi-api-key": cfg.elevenKey, "Content-Type": "application/json", Accept: "audio/mpeg" },
-        body: JSON.stringify(body)
-      }
-    );
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const url = URL.createObjectURL(await res.blob());
-    stopAll();
-    const a = new Audio(url);
-    currentAudio = a;
-    currentAudioUrl = url;
-    a.volume = cfg.volume;
-    const cleanup = () => {
-      if (currentAudioUrl === url) {
-        URL.revokeObjectURL(url);
-        currentAudioUrl = "";
-      }
-      if (currentAudio === a) currentAudio = null;
-    };
-    a.onended = cleanup;
-    a.onerror = cleanup;
-    await a.play();
-    msg("Playing ElevenLabs voice…");
-  } catch (e) {
-    stopAll();
-    msg("Test failed: " + e.message);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Refletir cfg -> UI
 // ---------------------------------------------------------------------------
@@ -559,6 +514,11 @@ function load() {
     delete cfg.lens;
     cfg.mode = normalizeMode(stored.mode || stored.announce);
     cfg.elevenKey = ""; // will be overwritten from local below
+    // "auto" -> idioma concreto detectado, já marcado na lista (sem opção "auto")
+    if (!cfg.lang || cfg.lang === "auto") {
+      cfg.lang = resolveLang("auto");
+      chrome.storage.sync.set({ lang: cfg.lang });
+    }
     if (stored.mode !== cfg.mode) chrome.storage.sync.set({ mode: cfg.mode });
     if (stored.announce || stored.lens) chrome.storage.sync.remove(["announce", "lens"]);
     buildLangDropdown();
@@ -633,9 +593,6 @@ function debounce(fn, ms) {
 // toggles: só ao LIGAR
 $("cueEnabled").addEventListener("change", (e) => { if (e.target.checked) previewCue(); });
 $("errorAlertEnabled").addEventListener("change", (e) => { if (e.target.checked) previewErrorChime(); });
-// resumo de estado no cabeçalho recolhido acompanha os toggles de som
-["cueEnabled", "errorAlertEnabled"].forEach((id) =>
-  $(id).addEventListener("change", reflectSummaries));
 // volumes: ao terminar de arrastar (debounce sobre 'input')
 $("cueVolume").addEventListener("input", debounce(previewCue, 350));
 $("errorVolume").addEventListener("input", debounce(previewErrorChime, 350));
@@ -671,7 +628,6 @@ $("refreshVoices").addEventListener("click", () => loadElevenVoices(true));
 $("resetNative").addEventListener("click", () => resetGroup("native"));
 $("resetEleven").addEventListener("click", () => resetGroup("eleven"));
 $("testNative").addEventListener("click", testNative);
-$("testEleven").addEventListener("click", testEleven);
 
 window.addEventListener("unload", stopAll);
 
