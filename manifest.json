@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Yappable",
+  "name": "Yappable for Lovable - Every build, debriefed",
   "version": "0.1.0",
-  "description": "Narrates completed Lovable agent responses via TTS — native browser speech or optional ElevenLabs.",
+  "description": "Natural voice companion for Lovable that briefs you audibly on every prompt — what changed, why it matters, and what to do next.",
   "permissions": ["storage", "declarativeNetRequest"],
   "host_permissions": [
     "https://lovable.dev/*",
@@ -34,7 +34,7 @@
     }
   ],
   "action": {
-    "default_title": "Yappable",
+    "default_title": "Yappable for Lovable",
     "default_popup": "popup/popup.html"
   },
   "icons": {

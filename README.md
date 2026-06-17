@@ -1,45 +1,50 @@
-# Yappable — Make Lovable Talk Back
+# Yappable for Lovable — Every build, debriefed
 
-A Chrome extension that narrates completed [Lovable](https://lovable.dev) agent responses out loud, so you can stay in the flow without reading every reply.
+Natural voice companion for [Lovable](https://lovable.dev) that briefs you audibly on every prompt — what changed, why it matters, and what to do next. Selectable interpretation according to user experience, from beginners to advanced builders.
 
-> Lovable works fast. Reading keeps you anchored to the screen. Yappable frees your eyes.
+*Independent extension for Lovable builders.*
+
+> Lovable ships fast. Reading keeps your eyes glued to the chat. **Yappable frees them.**
+
+It's not a screen reader. It's a co-pilot that tells you **what changed, why it matters, and what to double-check** — in a few seconds of natural speech, with the markdown, file paths, and symbol noise stripped out.
 
 ---
 
 ## The Problem
 
-Every time Lovable finishes a task, you have to stop what you're doing, switch focus to the chat, and read the response to know what happened and what comes next.
+Every time Lovable finishes a task, you stop, switch focus to the chat, and read the response to figure out what happened and what's next.
 
-If you're testing the app in another window, sketching something, or just thinking — that context switch breaks your flow. And the longer the response, the more time it takes.
+If you're testing the app in another window, sketching, or just thinking — that context switch breaks your flow. The longer the response, the worse it gets.
 
-Yappable fixes this by reading the response to you the moment it's ready.
+Yappable reads the response to you the instant it's ready. You keep building.
+
+---
+
+## What Makes It Different
+
+Most "read aloud" tools just dump the text into a TTS engine. Yappable **interprets** the output before speaking it:
+
+- Strips markdown, code fences, file names, and symbols that work on screen but sound like static.
+- Restructures the response into the order your brain actually wants: **status → what was done → why it matters → what to validate.**
+- Flags **risk**: unvalidated performance estimates, touched copy, build/schema changes, and SEO edits that deserve a second look before you ship.
+
+That last part is the point. Reading is a commodity. Knowing *where to look* is the product.
 
 ---
 
 ## Features
 
-- **Narrates completed responses automatically** — no click needed, fires the instant the agent finishes
-- **Four narration modes** — Fast (just the pending decision), Beginner (plain-language summary), Advanced (technical summary), Full (everything, verbatim)
-- **On-device AI summarization** — uses Chrome's built-in Gemini Nano and Prompt API when available; no data leaves your machine for this step
-- **Optional ElevenLabs voice** — premium TTS with your own voice and model settings
+- **Auto-narrates completed responses** — fires the instant the agent finishes, no click required
+- **Four narration modes** — Fast, Beginner, Advanced, Full (see below)
+- **On-device AI summarization** — uses Chrome's built-in Gemini Nano + Prompt API when available; nothing leaves your machine for this step
+- **Optional ElevenLabs voice** — premium TTS with your own voice and model settings (opt-in)
+- **Risk detector** — flags unvalidated metrics, copy changes, build/schema edits, and SEO touches
 - **Silence monitoring** — speaks up if Lovable stalls mid-task
-- **Error alert** — distinct chime when Lovable shows a "Try to fix" error that needs your click
-- **Verbose mode** — reads live progress updates while Lovable is working
-- **Multi-tab awareness** — prefixes the project name when you have more than one Lovable tab open
-- **Risk detector** — flags unvalidated performance estimates, touched copy, build/schema changes, and SEO edits
-- **100% local by default** — all processing runs in the browser; ElevenLabs is optional and opt-in
+- **Error alert** — distinct chime when Lovable surfaces a "Try to fix" error that needs your click
+- **Verbose mode** — reads live progress while Lovable is working
+- **Multi-tab awareness** — prefixes the project name when you've got more than one Lovable tab open
+- **100% local by default** — all processing runs in the browser; ElevenLabs is optional
 - **Minimal permissions** — only activates on `lovable.dev`
-
----
-
-## How It Works
-
-1. Open any project on [lovable.dev](https://lovable.dev)
-2. Click anywhere on the page once (unlocks browser autoplay)
-3. Send a message to Lovable and wait — Yappable narrates the response the moment it's done
-4. Use the extension popup to choose a narration mode, switch engines, or adjust the voice
-
-The extension intercepts Lovable's completion sound at the network level, uses it as a precise trigger, then reads the finished response text through the browser's Speech Synthesis API or ElevenLabs.
 
 ---
 
@@ -47,23 +52,37 @@ The extension intercepts Lovable's completion sound at the network level, uses i
 
 | Mode | What it reads |
 |------|---------------|
-| **Fast** | Only the pending decision or question. If nothing depends on you, says you're clear to continue. |
-| **Beginner** *(default)* | Plain-language summary translating technical details into practical impact. |
-| **Advanced** | Technical summary: verdict, risks, and the pending decision, keeping the terms. |
+| **Fast** | Only the pending decision or question. If nothing depends on you, it tells you you're clear to continue. |
+| **Beginner** *(default)* | Plain-language summary that translates technical detail into practical impact. |
+| **Advanced** | Technical summary — verdict, risks, and the pending decision, keeping the terms. |
 | **Full** | The entire agent response, read verbatim. |
+
+---
+
+## How It Works
+
+1. Open any project on [lovable.dev](https://lovable.dev)
+2. Click anywhere on the page once (unlocks browser autoplay)
+3. Send a message to Lovable — Yappable narrates the response the moment it's done
+4. Use the popup to switch modes, change engines, or tune the voice
+
+Under the hood: Yappable detects Lovable's completion sound at the network level and uses it as a precise "the agent is done" trigger, then runs the finished response text through its interpreter and speaks it via the browser's Speech Synthesis API or ElevenLabs.
 
 ---
 
 ## Installation
 
 ### Manual (Developer Mode)
+
 1. Clone or download this repository
-2. Open Chrome and go to `chrome://extensions/`
+2. Open Chrome → `chrome://extensions/`
 3. Enable **Developer mode** (top-right toggle)
 4. Click **Load unpacked** and select the repository folder
 5. Open any project on `lovable.dev` and click the page once to unlock audio
 
 > After editing any source file, reload the extension at `chrome://extensions/` and refresh the Lovable tab.
+
+The default path (native speech + on-device summary) needs **no account and no API key**. ElevenLabs is entirely optional.
 
 ---
 
@@ -71,7 +90,7 @@ The extension intercepts Lovable's completion sound at the network level, uses i
 
 All processing is local by default. Native speech and on-device AI summaries run entirely in the browser — Lovable response text never leaves your machine in this path.
 
-If you add an ElevenLabs API key, only the final narration text is sent to ElevenLabs to generate audio. Your API key is stored in `chrome.storage.local` and is never synced across devices.
+If you add an ElevenLabs API key, only the final narration text is sent to ElevenLabs to generate audio. Your key is stored in `chrome.storage.local` and is never synced across devices or sent anywhere else.
 
 Full privacy policy: [docs/privacy-policy.md](docs/privacy-policy.md)
 
@@ -103,6 +122,18 @@ yappable/
 
 ---
 
+## More tools for Lovable builders
+
+- **Lovable Skills** — https://github.com/lucioamor/lovable-skills/
+- **Lovable Chat Exporter** — https://github.com/lucioamor/lovable-chat-exporter
+- **Lovable Co-Pilot (Prompt Assistant GPT)** — https://chatgpt.com/g/g-68556719564081918997f266b3ddf952-lovable-co-pilot-prompt-assistant-v4-3-2026-05-21
+
+---
+
 ## License
 
-MIT
+Open and free to use, all rights reserved. You may install and use Yappable for
+Lovable at no cost, but you may **not** modify/remix, redistribute, or resell it.
+See [LICENSE](LICENSE) for full terms.
+
+*Independent extension for Lovable builders. Not affiliated with, endorsed by, or sponsored by Lovable.*

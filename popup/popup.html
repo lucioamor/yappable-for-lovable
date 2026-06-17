@@ -126,16 +126,19 @@
     .rngval.mini { font-size: 10.5px; color: var(--muted); text-align: right; }
 
     /* ── narration mode ──────────────────────────────── */
-    .narrlist { display: grid; gap: 6px; margin: 0; }
+    .narrlist { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0; }
+    .narrlist label[title] { cursor: pointer; }
     .narrlist input { position: absolute; opacity: 0; pointer-events: none; }
-    .narropt { display: grid; grid-template-columns: 26px 1fr; align-items: center; gap: 8px; padding: 8px 9px; cursor: pointer;
+    .narropt { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 8px; cursor: pointer;
       background: var(--surface); border: 1px solid var(--border-faint); border-radius: 10px; transition: all .12s; }
     .narropt:hover { border-color: var(--border); }
-    .narropt .em { font-size: 17px; text-align: center; }
+    .narropt .em { font-size: 15px; }
     .narropt .nm { font-weight: 600; font-size: 12px; color: var(--txt); }
-    .narropt .ds { font-size: 10.5px; color: var(--muted-2); line-height: 1.2; }
+    .narropt .dflt { font-size: 8px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--muted-2);
+      background: var(--surface-2); border: 1px solid var(--border-faint); border-radius: 999px; padding: 1px 5px; }
     .narrlist input:checked + .narropt { border-color: var(--accent-line); background: var(--accent-soft); }
     .narrlist input:checked + .narropt .nm { color: var(--accent); }
+    .narrlist input:checked + .narropt .dflt { color: var(--accent); border-color: var(--accent-line); }
     .narrlist input:focus-visible + .narropt { outline: 2px solid rgba(245, 158, 11, 0.55); outline-offset: 2px; }
 
     /* ── voice panel (driven by segmented, no tabs) ──── */
@@ -196,7 +199,7 @@
     .affiliate-row a.affiliate { margin: 0; }
 
     /* ── language dropdown ───────────────────────────── */
-    .langbar { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 8px; margin: 4px 0 8px; }
+    .langbar { display: grid; grid-template-columns: 1fr; align-items: center; gap: 8px; margin: 4px 0 8px; }
     .langbar > label { margin: 0; font-weight: 600; font-size: 12px; color: var(--txt-2); }
     .dropdown { position: relative; }
     .dd-btn { width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 9px; cursor: pointer;
@@ -220,9 +223,13 @@
     /* ── modal ───────────────────────────────────────── */
     .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: grid; place-items: center; padding: 18px; z-index: 20; }
     .modal-bg[hidden] { display: none; }
-    .modal { background: var(--surface); border: 1px solid #2d2d31; border-radius: 12px; padding: 16px; width: min(320px, 100%); max-height: 92vh; overflow: auto;
+    .modal { position: relative; background: var(--surface); border: 1px solid #2d2d31; border-radius: 12px; padding: 16px; width: min(320px, 100%); max-height: 92vh; overflow: auto;
       box-shadow: 0 24px 56px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.03); }
-    .modal h2 { font-size: 12px; margin: 0 0 4px; color: var(--accent); letter-spacing: .1em; text-transform: uppercase; }
+    .modal h2 { font-size: 12px; margin: 0 4px 4px 0; color: var(--accent); letter-spacing: .1em; text-transform: uppercase; }
+    .modal-x { position: absolute; top: 12px; right: 12px; width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center; font-size: 16px; line-height: 1; font-weight: 700;
+      color: var(--txt-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; z-index: 1; }
+    .modal-x:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
     .modal h3 { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-2); margin: 14px 0 4px; font-weight: 600; }
     .keyinput { display: flex; gap: 6px; }
     .keyinput input { flex: 1; }
@@ -259,10 +266,10 @@
   <!-- primary: what to read each turn -->
   <div class="section-h" title="How much of the response to read when Lovable finishes.">Narration mode <span class="hint">— what to read each turn</span></div>
   <fieldset class="narrlist">
-    <label><input type="radio" name="mode" value="fast" /><span class="narropt"><span class="em">⚡</span><span><span class="nm">Fast</span><br><span class="ds">Only what depends on you now: the pending decision or question. If nothing is pending, says you're clear to continue.</span></span></span></label>
-    <label><input type="radio" name="mode" value="beginner" /><span class="narropt"><span class="em">🌱</span><span><span class="nm">Beginner</span><br><span class="ds">Plain-language summary translating technical details into practical impact. (default)</span></span></span></label>
-    <label><input type="radio" name="mode" value="advanced" /><span class="narropt"><span class="em">🛠️</span><span><span class="nm">Advanced</span><br><span class="ds">Dense technical summary: verdict, risks, and the pending decision, keeping the terms.</span></span></span></label>
-    <label><input type="radio" name="mode" value="completo" /><span class="narropt"><span class="em">📄</span><span><span class="nm">Full</span><br><span class="ds">Reads the entire agent response, uncut.</span></span></span></label>
+    <label title="Only what depends on you now: the pending decision or question. If nothing is pending, says you're clear to continue."><input type="radio" name="mode" value="fast" /><span class="narropt"><span class="em">⚡</span><span class="nm">Fast</span></span></label>
+    <label title="Plain-language summary translating technical details into practical impact. (default)"><input type="radio" name="mode" value="beginner" /><span class="narropt"><span class="em">🌱</span><span class="nm">Beginner</span><span class="dflt">default</span></span></label>
+    <label title="Dense technical summary: verdict, risks, and the pending decision, keeping the terms."><input type="radio" name="mode" value="advanced" /><span class="narropt"><span class="em">🛠️</span><span class="nm">Advanced</span></span></label>
+    <label title="Reads the entire agent response, uncut."><input type="radio" name="mode" value="completo" /><span class="narropt"><span class="em">📄</span><span class="nm">Full</span></span></label>
   </fieldset>
 
   <!-- sounds: cue + error alert, toggle and inline volume -->
@@ -404,11 +411,11 @@
   <!-- SETTINGS MODAL -->
   <div class="modal-bg" id="settingsModal" hidden>
     <div class="modal">
+      <button type="button" class="modal-x" id="settingsClose" title="Close" aria-label="Close">✕</button>
       <h2>Settings</h2>
 
       <h3>Language</h3>
       <div class="langbar" title="Language used by BOTH engines (native voice and ElevenLabs).">
-        <label>Language</label>
         <div class="dropdown" id="langDrop">
           <button type="button" class="dd-btn" id="langBtn"></button>
           <div class="dd-list" id="langList" hidden></div>
@@ -425,9 +432,8 @@
         <button class="ghost mini" id="keyReveal" title="Show/hide">👁</button>
       </div>
       <a id="keyAffiliate" class="affiliate" href="https://nxlv.ai/elevenlabs?utm_source=yappable" target="_blank" rel="noopener noreferrer" hidden>
-        Don't have a key yet? <strong>Create an ElevenLabs account →</strong>
+        Don't have a key yet? <strong>Create an account →</strong>
       </a>
-      <small>Stored in <strong>storage.local</strong> — not synced across devices.</small>
 
       <h3>Privacy</h3>
       <div class="privacy-note">
@@ -435,24 +441,11 @@
         ☁️ <strong>ElevenLabs (optional):</strong> only the final speech text is sent to generate audio when that engine is active.
       </div>
 
-      <h3>Links</h3>
-      <div class="privacy-note">
-        Links to Lovable and ElevenLabs may be affiliate links. This does not affect the extension's local functionality.
-      </div>
-      <div class="affiliate-row">
-        <a class="affiliate" href="https://nxlv.ai/lovable?utm_source=yappable" target="_blank" rel="noopener noreferrer">
-          <strong>Lovable →</strong>
-        </a>
-        <a class="affiliate" href="https://nxlv.ai/elevenlabs?utm_source=yappable" target="_blank" rel="noopener noreferrer">
-          <strong>ElevenLabs →</strong>
-        </a>
-      </div>
-
       <h3>Narration</h3>
       <div class="field" title="Wait time between detecting completion and starting speech (lets the DOM settle).">
         <label for="delayMs">Delay (ms)</label>
-        <input type="range" id="delayMs" min="0" max="100" step="10" />
-        <span class="rngval" id="delayMsOut">50</span>
+        <input type="range" id="delayMs" min="0" max="3000" step="100" />
+        <span class="rngval" id="delayMsOut">100</span>
       </div>
 
       <h3>ElevenLabs advanced</h3>
@@ -481,10 +474,6 @@
       <div class="field nv" title="Deterministic seed (0 to 4294967295). Only used when 'Random' is disabled.">
         <label for="elevenSeed">Seed</label>
         <input type="number" id="elevenSeed" min="0" max="4294967295" step="1" placeholder="—" />
-      </div>
-
-      <div class="btnrow">
-        <button class="act primary" id="settingsClose">Close</button>
       </div>
     </div>
   </div>

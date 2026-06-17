@@ -7,12 +7,12 @@
   const DEFAULTS = {
     enabled: true,
     engine: "native", // "native" | "elevenlabs"
-    lang: "en-US",
+    lang: "auto", // "auto" = detecta pelo navegador; fallback en-US (resolveLang)
     rate: 1.05,
     pitch: 1.0,
     volume: 1.0,
     nativeVoice: "", // nome exato da voz; vazio = melhor match por lang
-    delayMs: 50, // pequeno settle do DOM antes do cue (capado em 100ms no fast path)
+    delayMs: 100, // pequeno settle do DOM antes do cue
     mode: "beginner", // fast | beginner | advanced | completo
 
     cueEnabled: true, // toca um som antes da narração
@@ -34,13 +34,13 @@
     elevenKey: "",
     elevenVoiceId: "21m00Tcm4TlvDq8ikWAM", // Rachel (default público)
     elevenModel: "eleven_multilingual_v2",
-    elevenOutputFormat: "mp3_44100_128", // query param output_format
+    elevenOutputFormat: "mp3_44100_64", // query param output_format
     elevenStability: 0.5, // 0–1
     elevenSimilarity: 0.75, // similarity_boost 0–1
     elevenStyle: 0.0, // style exaggeration 0–1 (v2+)
     elevenSpeed: 1.0, // velocidade 0.7–1.2
     elevenSpeakerBoost: true, // use_speaker_boost
-    elevenTextNormalization: "auto", // auto | on | off
+    elevenTextNormalization: "on", // auto | on | off
     elevenSeedRandom: true, // true = sem seed fixo
     elevenSeed: null // seed determinístico 0–4294967295
   };
@@ -48,6 +48,25 @@
   // modelos que aceitam language_code (Multilingual v2 auto-detecta)
   const LANG_MODELS = /turbo_v2_5|flash_v2_5|eleven_v3/;
   const langCode = (l) => (l || "").split("-")[0];
+  // "auto" -> melhor match com o idioma do navegador; fallback en-US.
+  const SUPPORTED_LANGS = [
+    "pt-BR", "pt-PT", "en-US", "en-GB", "es-ES", "es-MX", "fr-FR", "de-DE",
+    "it-IT", "nl-NL", "pl-PL", "ru-RU", "tr-TR", "ar-SA", "hi-IN", "ja-JP", "ko-KR", "zh-CN"
+  ];
+  function resolveLang(l) {
+    if (l && l !== "auto") return l;
+    const navs = (navigator.languages && navigator.languages.length)
+      ? navigator.languages : [navigator.language || ""];
+    for (const nav of navs) {
+      const n = String(nav).toLowerCase().replace(/_/g, "-");
+      let hit = SUPPORTED_LANGS.find((c) => c.toLowerCase() === n);
+      if (hit) return hit;
+      const base = n.split("-")[0];
+      hit = SUPPORTED_LANGS.find((c) => c.toLowerCase().split("-")[0] === base);
+      if (hit) return hit;
+    }
+    return "en-US";
+  }
   // Canal de diagnostico do popup: o content script publica o ultimo output
   // observado e responde a pedidos diretos da aba ativa.
   const LAST_OUTPUT_KEY = "lovableNarratorLastOutput";
@@ -69,6 +88,7 @@
     delete cfg.announce;
     delete cfg.lens;
     cfg.mode = normalizeMode(stored.mode || stored.announce);
+    cfg.lang = resolveLang(cfg.lang); // "auto" -> idioma concreto
     cfg.elevenKey = ""; // loaded from local below
     if (stored.elevenKey) chrome.storage.sync.remove("elevenKey");
     if (stored.mode !== cfg.mode) chrome.storage.sync.set({ mode: cfg.mode });
@@ -88,6 +108,7 @@
       if (k === "elevenKey") continue; // elevenKey is now in local, ignore sync
       if (k === "announce" || k === "lens") continue; // eixos antigos, ignorados
       if (k === "mode") cfg.mode = normalizeMode(v.newValue);
+      else if (k === "lang") cfg.lang = resolveLang(v.newValue);
       else cfg[k] = v.newValue;
     }
     // trocou o idioma -> o summarizer foi criado p/ o idioma anterior; descarta e
@@ -378,7 +399,7 @@
 
   // --- TTS ElevenLabs ---
   async function speakEleven(text, epoch) {
-    const fmtParam = cfg.elevenOutputFormat || "mp3_44100_128";
+    const fmtParam = cfg.elevenOutputFormat || "mp3_44100_64";
     const sendText = text;
     const voiceSettings = {
       stability: cfg.elevenStability,

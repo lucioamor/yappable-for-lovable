@@ -1,12 +1,12 @@
 const DEFAULTS = {
   enabled: true,
   engine: "native", // "native" | "elevenlabs"
-  lang: "en-US", // idioma universal (nativa + ElevenLabs + resumo on-device)
+  lang: "auto", // "auto" = detect from browser, fallback en-US (resolved by resolveLang)
   rate: 1.05,
   pitch: 1.0,
   volume: 1.0,
   nativeVoice: "",
-  delayMs: 50,
+  delayMs: 100,
   mode: "beginner", // fast | beginner | advanced | completo
   cueEnabled: true,
   cueFile: "assets/single-sound-message-icq-ooh.mp3",
@@ -17,13 +17,13 @@ const DEFAULTS = {
   elevenKey: "",
   elevenVoiceId: "21m00Tcm4TlvDq8ikWAM",
   elevenModel: "eleven_multilingual_v2",
-  elevenOutputFormat: "mp3_44100_128",
+  elevenOutputFormat: "mp3_44100_64",
   elevenStability: 0.5,
   elevenSimilarity: 0.75,
   elevenStyle: 0.0,
   elevenSpeed: 1.0,
   elevenSpeakerBoost: true,
-  elevenTextNormalization: "auto",
+  elevenTextNormalization: "on",
   elevenSeedRandom: true,
   elevenSeed: null
 };
@@ -54,6 +54,23 @@ const LANGS = [
   ["zh-CN", "cn", "中文"]
 ];
 
+// "auto" -> melhor match com o idioma do navegador; fallback en-US.
+const SUPPORTED_LANGS = LANGS.map((l) => l[0]);
+function resolveLang(l) {
+  if (l && l !== "auto") return l;
+  const navs = (navigator.languages && navigator.languages.length)
+    ? navigator.languages : [navigator.language || ""];
+  for (const nav of navs) {
+    const n = String(nav).toLowerCase().replace(/_/g, "-");
+    let hit = SUPPORTED_LANGS.find((c) => c.toLowerCase() === n);
+    if (hit) return hit;
+    const base = n.split("-")[0];
+    hit = SUPPORTED_LANGS.find((c) => c.toLowerCase().split("-")[0] === base);
+    if (hit) return hit;
+  }
+  return "en-US";
+}
+
 // field groups for the Reset button
 const GROUPS = {
   native: ["nativeVoice", "rate", "pitch", "volume"],
@@ -69,7 +86,7 @@ const VOICE_CACHE_KEY = "elevenVoicesCache"; // chrome.storage.local: { key, at,
 // Payload de diagnostico publicado por content.js: ultimo output observado,
 // variantes por modo de "O que narrar" e status do resumo local.
 const LAST_OUTPUT_KEY = "lovableNarratorLastOutput";
-const MAX_DELAY_MS = 100;
+const MAX_DELAY_MS = 3000;
 const MODES = ["fast", "beginner", "advanced", "completo"];
 // Migração: eixos antigos (announce × lens) e o par anterior (resumo/completo).
 const LEGACY_TO_MODE = {
@@ -157,7 +174,7 @@ function reflectSummaries() {
   const vs = $("voiceState");
   if (vs) {
     const eng = cfg.engine === "elevenlabs" ? "☁️ ElevenLabs" : "🔊 Native";
-    const cc = (LANGS.find((l) => l[0] === cfg.lang) || LANGS[0])[1].toUpperCase();
+    const cc = (LANGS.find((l) => l[0] === resolveLang(cfg.lang)) || LANGS[0])[1].toUpperCase();
     vs.textContent = `${eng} · ${cc}`;
   }
   const ss = $("soundsState");
@@ -217,7 +234,7 @@ function updateReadDebug() {
   observed.value = lastOutput?.observed || "";
   const _ir = lastOutput?.ir;
   read.value = _ir && window.LovableRenderer
-    ? window.LovableRenderer.render(_ir, { mode: normalizeMode(cfg.mode), lang: cfg.lang })
+    ? window.LovableRenderer.render(_ir, { mode: normalizeMode(cfg.mode), lang: resolveLang(cfg.lang) })
     : (lastOutput?.readText || "");
   const status = lastOutput?.summarizerStatus;
   read.title = status ? `Source: ${originLabel(status)}` : "";
@@ -247,6 +264,18 @@ function reflectSeed() { $("elevenSeed").disabled = cfg.elevenSeedRandom; }
 function buildLangDropdown() {
   const list = $("langList");
   list.replaceChildren();
+  // opção padrão: detecta o idioma pelo navegador
+  const autoOpt = document.createElement("div");
+  autoOpt.className = "dd-opt";
+  autoOpt.dataset.code = "auto";
+  const autoFlag = document.createElement("span");
+  autoFlag.className = "flag-pill";
+  autoFlag.textContent = "🌐";
+  const autoLabel = document.createElement("span");
+  autoLabel.textContent = "Auto-detect";
+  autoOpt.append(autoFlag, autoLabel);
+  autoOpt.addEventListener("click", () => { set("lang", "auto"); reflectLang(); $("langList").hidden = true; });
+  list.appendChild(autoOpt);
   for (const [code, cc, name] of LANGS) {
     const o = document.createElement("div");
     o.className = "dd-opt";
@@ -262,12 +291,18 @@ function buildLangDropdown() {
   }
 }
 function reflectLang() {
-  const [code, cc, name] = LANGS.find((l) => l[0] === cfg.lang) || LANGS[0];
   const flag = document.createElement("span");
   flag.className = "flag-pill";
-  flag.textContent = cc;
   const label = document.createElement("span");
-  label.textContent = name;
+  if (cfg.lang === "auto") {
+    const [, , name] = LANGS.find((l) => l[0] === resolveLang("auto")) || LANGS[2];
+    flag.textContent = "🌐";
+    label.textContent = `Auto · ${name}`;
+  } else {
+    const [, cc, name] = LANGS.find((l) => l[0] === cfg.lang) || LANGS[0];
+    flag.textContent = cc;
+    label.textContent = name;
+  }
   $("langBtn").replaceChildren(flag, label);
   $("langList").querySelectorAll(".dd-opt").forEach((o) => o.classList.toggle("sel", o.dataset.code === cfg.lang));
   reflectSummaries();
@@ -281,7 +316,7 @@ document.addEventListener("click", () => { $("langList").hidden = true; });
 function reflectKeyStatus() {
   const has = !!cfg.elevenKey;
   $("keyDot").classList.toggle("ok", has);
-  $("keyTxt").textContent = has ? "API key configured" : "No API key";
+  $("keyTxt").textContent = has ? "Configured" : "No API key";
   $("keyAffiliate").hidden = has; // link de afiliado só quando falta a chave
 }
 $("openSettings").addEventListener("click", () => {
@@ -399,7 +434,7 @@ function testNative() {
   stopAll();
   if (!("speechSynthesis" in window)) { msg("speechSynthesis not supported."); return; }
   const u = new SpeechSynthesisUtterance(SAMPLE);
-  u.lang = cfg.lang;
+  u.lang = resolveLang(cfg.lang);
   u.rate = cfg.rate;
   u.pitch = cfg.pitch;
   u.volume = cfg.volume;
@@ -416,7 +451,7 @@ async function testEleven() {
   if (!cfg.elevenVoiceId) { msg("Select a voice."); return; }
   msg("Generating ElevenLabs audio…");
   try {
-    const fmtParam = cfg.elevenOutputFormat || "mp3_44100_128";
+    const fmtParam = cfg.elevenOutputFormat || "mp3_44100_64";
     const body = {
       text: SAMPLE,
       model_id: cfg.elevenModel,
@@ -429,7 +464,7 @@ async function testEleven() {
       },
       apply_text_normalization: cfg.elevenTextNormalization || "auto"
     };
-    if (LANG_MODELS.test(cfg.elevenModel)) body.language_code = langCode(cfg.lang);
+    if (LANG_MODELS.test(cfg.elevenModel)) body.language_code = langCode(resolveLang(cfg.lang));
     if (!cfg.elevenSeedRandom && cfg.elevenSeed != null) body.seed = cfg.elevenSeed;
 
     const res = await fetch(
