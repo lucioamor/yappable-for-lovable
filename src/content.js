@@ -1331,7 +1331,7 @@
   // ---------------------------------------------------------------------------
   let lastVerbose = ""; // último snippet enfileirado (dedup)
   let lastVerboseAt = 0; // timestamp do último verbose (throttle)
-  const VERBOSE_MIN_INTERVAL = 30000; // mín. 30s entre leituras de progresso
+  const VERBOSE_MIN_INTERVAL = 5000; // mín. 5s entre leituras de progresso (layout antigo)
 
   // Cabeçalhos de ação genéricos: não valem uma leitura sozinhos.
   const RE_PROGRESS_NOISE = /^(working|thinking|loading|thought.*)\.{0,3}$/i;
