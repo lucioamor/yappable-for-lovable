@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Welcome to Yappable for Lovable</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a0a0b;
+      --surface: #111113;
+      --surface-2: #18181b;
+      --border: #27272a;
+      --border-soft: #1f1f23;
+      --accent: #f59e0b;
+      --accent-soft: rgba(245, 158, 11, 0.1);
+      --accent-line: rgba(245, 158, 11, 0.45);
+      --txt: #fafafa;
+      --txt-2: #d4d4d8;
+      --muted: #a1a1aa;
+      --muted-2: #71717a;
+      --ok-strong: #22c55e;
+      --danger: #f87171;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; min-height: 100%;
+      display: grid; place-items: center; padding: 32px 18px;
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+      color: var(--txt-2);
+      background:
+        radial-gradient(900px 480px at 50% -10%, rgba(245,158,11,0.10), transparent 60%),
+        var(--bg);
+    }
+    .wrap { width: min(560px, 100%); }
+
+    .brand { display: flex; align-items: center; gap: 12px; justify-content: center; margin-bottom: 8px; }
+    .brand .logo { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; font-size: 22px;
+      background: var(--accent-soft); border: 1px solid var(--accent-line); }
+    .brand h1 { margin: 0; font-size: 14px; font-weight: 800; letter-spacing: 0.24em; text-transform: uppercase; color: var(--accent); }
+
+    .lede { text-align: center; margin: 6px 0 22px; }
+    .lede h2 { margin: 0 0 8px; font-size: 24px; font-weight: 750; color: var(--txt); letter-spacing: -0.01em; }
+    .lede p { margin: 0 auto; max-width: 440px; color: var(--muted); font-size: 14px; }
+
+    .card { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 16px; padding: 22px;
+      box-shadow: 0 24px 60px -28px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,.03); }
+
+    .pitch { display: grid; gap: 10px; margin: 0 0 18px; }
+    .row { display: flex; gap: 11px; align-items: flex-start; }
+    .row .ic { flex: none; width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; font-size: 14px;
+      background: var(--surface-2); border: 1px solid var(--border); }
+    .row .tx { font-size: 13px; color: var(--txt-2); }
+    .row .tx b { color: var(--txt); font-weight: 650; }
+
+    label.fld { display: block; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-2); margin: 0 0 7px; }
+    .keyinput { display: flex; gap: 8px; }
+    input[type="password"], input[type="text"] {
+      flex: 1; min-height: 42px; padding: 10px 12px; font: inherit;
+      background: var(--surface-2); color: var(--txt); border: 1px solid var(--border); border-radius: 10px;
+    }
+    input:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+    .reveal { min-width: 44px; padding: 0 12px; cursor: pointer; font-size: 16px;
+      background: var(--surface-2); color: var(--txt-2); border: 1px solid var(--border); border-radius: 10px; }
+    .reveal:hover { color: var(--accent); border-color: var(--accent); }
+
+    .keystatus { display: flex; align-items: center; gap: 8px; margin: 11px 0 2px; min-height: 18px; }
+    .keystatus .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted-2); flex: none; }
+    .keystatus .dot.ok { background: var(--ok-strong); }
+    .keystatus .dot.bad { background: var(--danger); }
+    .keystatus .txt { font-size: 12px; color: var(--muted); }
+
+    a.affiliate { display: block; margin: 14px 0 0; padding: 11px 13px; font-size: 13px; text-decoration: none; text-align: center;
+      color: var(--txt-2); background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 10px; transition: background .15s, border-color .15s; }
+    a.affiliate:hover { background: rgba(245,158,11,0.16); border-color: var(--accent); }
+    a.affiliate strong { color: var(--accent); }
+
+    .actions { display: flex; gap: 10px; margin-top: 20px; }
+    button.act { flex: 1; min-height: 46px; padding: 0 16px; cursor: pointer; font: inherit; font-weight: 700; font-size: 14px;
+      border-radius: 11px; border: 1px solid var(--border); background: var(--surface-2); color: var(--txt);
+      transition: background .15s, border-color .15s, color .15s, transform .1s; }
+    button.act:active { transform: scale(0.98); }
+    button.act.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+    button.act.primary:hover { background: #fbbf24; border-color: #fbbf24; }
+    button.act.primary:disabled { opacity: .5; cursor: not-allowed; }
+    button.act.ghost:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
+    .foot { text-align: center; margin-top: 16px; font-size: 11.5px; color: var(--muted-2); line-height: 1.5; }
+    .privacy { margin-top: 14px; padding: 10px 12px; font-size: 12px; color: var(--muted); line-height: 1.5;
+      background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 10px; }
+    .privacy b { color: var(--txt-2); }
+    #msg { text-align: center; min-height: 16px; margin-top: 10px; font-size: 12px; color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <div class="logo">🗣️</div>
+      <h1>Yappable</h1>
+    </div>
+
+    <div class="lede">
+      <h2>Hear every Lovable build, the moment it lands.</h2>
+      <p>Yappable narrates what changed, why it matters, and what to do next — out loud, hands-free, while you build on Lovable.</p>
+    </div>
+
+    <div class="card">
+      <div class="pitch">
+        <div class="row">
+          <div class="ic">⚡</div>
+          <div class="tx"><b>Premium voice, optional.</b> Add an ElevenLabs API key for a natural, expressive voice. The browser's built-in voice works without one.</div>
+        </div>
+        <div class="row">
+          <div class="ic">🔒</div>
+          <div class="tx"><b>Your key stays local.</b> Stored only in this browser — never synced to the cloud. Only the final narration text is sent to ElevenLabs to generate audio.</div>
+        </div>
+      </div>
+
+      <label class="fld" for="key">ElevenLabs API key</label>
+      <div class="keyinput">
+        <input type="password" id="key" placeholder="xi-api-key…" autocomplete="off" spellcheck="false" />
+        <button type="button" class="reveal" id="reveal" title="Show / hide">👁</button>
+      </div>
+      <div class="keystatus" id="status" hidden>
+        <span class="dot" id="dot"></span>
+        <span class="txt" id="statusTxt"></span>
+      </div>
+
+      <a id="affiliate" class="affiliate" href="https://nxlv.ai/elevenlabs?utm_source=yappable" target="_blank" rel="noopener noreferrer">
+        No key yet? <strong>Create a free ElevenLabs account →</strong>
+      </a>
+
+      <div class="actions">
+        <button type="button" class="act ghost" id="skip">Use native voice for now</button>
+        <button type="button" class="act primary" id="activate" disabled>Activate ElevenLabs</button>
+      </div>
+
+      <div id="msg"></div>
+
+      <div class="privacy">
+        🔒 <b>Local by default.</b> Native speech and on-device summaries run in your browser. ElevenLabs is used only when you turn it on.
+      </div>
+    </div>
+
+    <div class="foot">You can change voice, language, and the key anytime from the toolbar popup ⚙.</div>
+  </div>
+
+  <script src="onboarding.js"></script>
+</body>
+</html>

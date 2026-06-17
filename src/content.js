@@ -32,13 +32,13 @@
     verboseEnabled: false,
 
     elevenKey: "",
-    elevenVoiceId: "21m00Tcm4TlvDq8ikWAM", // Rachel (default público)
-    elevenModel: "eleven_multilingual_v2",
+    elevenVoiceId: "cgSgspJ2msm6clMCkdW9", // Jessica (default voice, expressiva/playful)
+    elevenModel: "eleven_flash_v2_5",
     elevenOutputFormat: "mp3_44100_64", // query param output_format
-    elevenStability: 0.5, // 0–1
-    elevenSimilarity: 0.75, // similarity_boost 0–1
-    elevenStyle: 0.0, // style exaggeration 0–1 (v2+)
-    elevenSpeed: 1.0, // velocidade 0.7–1.2
+    elevenStability: 0.2, // 0–1
+    elevenSimilarity: 0.2, // similarity_boost 0–1
+    elevenStyle: 0.5, // style exaggeration 0–1 (v2+)
+    elevenSpeed: 1.1, // velocidade (REST 0.25–4.0)
     elevenSpeakerBoost: true, // use_speaker_boost
     elevenTextNormalization: "on", // auto | on | off
     elevenSeedRandom: true, // true = sem seed fixo

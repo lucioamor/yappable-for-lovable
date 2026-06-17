@@ -53,6 +53,15 @@
     /* ── header ─────────────────────────────────────── */
     .topbar { display: flex; align-items: center; justify-content: space-between; padding-bottom: 10px; margin: 0 0 12px; border-bottom: 1px solid var(--border-soft); }
     .header-brand { display: flex; flex-direction: column; gap: 2px; }
+    .header-actions { display: flex; align-items: center; gap: 8px; }
+
+    /* compact language flag pill in topbar */
+    .lang-pill { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 5px 9px; cursor: pointer;
+      background: var(--surface-2); color: var(--txt-2); border: 1px solid var(--border); border-radius: 8px; font: inherit; font-weight: 600; }
+    .lang-pill:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .lang-pill::after { content: "▾"; color: var(--muted-2); font-size: 11px; }
+    .lang-pill .flag-pill { width: 24px; min-width: 24px; }
+    #langDrop .dd-list { left: auto; right: 0; width: 220px; }
     h1 { margin: 0; color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: 0.2em; line-height: 1.1; text-transform: uppercase; }
     .status-line { color: var(--muted-3); font-size: 10px; letter-spacing: 0.03em; }
 
@@ -71,6 +80,8 @@
 
     .icon-btn { width: 28px; min-width: 28px; min-height: 28px; padding: 0; border-color: transparent; background: transparent; color: var(--muted-3); }
     .icon-btn:hover { border-color: transparent; background: transparent; color: var(--muted); }
+    .icon-btn.gear { width: 34px; min-width: 34px; min-height: 34px; font-size: 18px; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+    .icon-btn.gear:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 
     .field { display: grid; grid-template-columns: 108px 1fr 46px; align-items: center; gap: 8px; margin: 7px 0; }
     .field.nv { grid-template-columns: 108px 1fr; }
@@ -90,6 +101,10 @@
     .master .state { font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
     .master .state.on { color: var(--ok); }
     .master .state.off { color: var(--danger); }
+    /* engine indicator chip in hero — click to configure */
+    .enginebadge { min-height: 24px; padding: 3px 9px; font-size: 11px; font-weight: 700; letter-spacing: .02em;
+      color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 999px; }
+    .enginebadge:hover { background: rgba(245, 158, 11, 0.16); border-color: var(--accent); color: var(--accent); }
 
     /* verbose toggle row */
     .subrow { display: flex; align-items: center; gap: 10px; margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--border-soft); }
@@ -119,6 +134,7 @@
     .seg .em { font-size: 15px; }
 
     /* sounds: toggle + mini volume, all inline */
+    .soundgroup { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 10px; padding: 6px 12px 11px; box-shadow: inset 0 1px 0 rgba(255,255,255,.025); }
     .soundline { display: grid; grid-template-columns: 1fr 84px 30px auto; align-items: center; gap: 8px; margin: 9px 0 0; }
     .soundline:first-child { margin-top: 2px; }
     .soundline > label { margin: 0; font-weight: 500; font-size: 12px; color: var(--txt-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -199,13 +215,7 @@
     .affiliate-row a.affiliate { margin: 0; }
 
     /* ── language dropdown ───────────────────────────── */
-    .langbar { display: grid; grid-template-columns: 1fr; align-items: center; gap: 8px; margin: 4px 0 8px; }
-    .langbar > label { margin: 0; font-weight: 600; font-size: 12px; color: var(--txt-2); }
     .dropdown { position: relative; }
-    .dd-btn { width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 9px; cursor: pointer;
-      background: var(--surface-2); color: var(--txt); border: 1px solid var(--border); border-radius: 8px; font: inherit; font-weight: 500; text-align: left; min-height: 32px; }
-    .dd-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-    .dd-btn::after { content: "▾"; margin-left: auto; color: var(--muted-2); }
     .flag-pill { width: 28px; min-width: 28px; height: 16px; display: inline-flex; align-items: center; justify-content: center;
       border-radius: 4px; background: var(--border); color: var(--txt-2); font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
     .dd-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 5; max-height: 240px; overflow: auto;
@@ -246,7 +256,11 @@
       <span class="status-line">Lovable turn narration</span>
     </div>
     <div class="header-actions">
-      <button class="icon-btn" id="openSettings" title="Language, API key, and advanced settings.">⚙</button>
+      <div class="dropdown" id="langDrop" title="Narration language (native voice and ElevenLabs).">
+        <button type="button" class="lang-pill" id="langBtn" aria-label="Narration language"></button>
+        <div class="dd-list" id="langList" hidden></div>
+      </div>
+      <button class="icon-btn gear" id="openSettings" title="API key and advanced settings.">⚙</button>
     </div>
   </div>
 
@@ -254,6 +268,7 @@
   <div class="control hero" id="masterCard">
     <div class="master" title="Enable or disable narration. Turning off stops any ongoing speech immediately.">
       <label class="cap" for="enabled">Narration</label>
+      <button type="button" class="enginebadge" id="engineBadge" title="Voice engine — click to switch / configure."></button>
       <span class="state" id="enabledState"></span>
       <div class="switch"><input type="checkbox" id="enabled" /></div>
     </div>
@@ -272,27 +287,22 @@
     <label title="Reads the entire agent response, uncut."><input type="radio" name="mode" value="completo" /><span class="narropt"><span class="em">📄</span><span class="nm">Full</span></span></label>
   </fieldset>
 
-  <!-- sounds: cue + error alert, toggle and inline volume -->
-  <details class="cfg" id="cfgSounds" open>
-    <summary title="Short sound before narration and error chime. Toggle and volume inline.">
-      <span class="cfg-ttl">Sounds &amp; alerts</span>
-      <span class="cfg-state" id="soundsState"></span>
-    </summary>
-    <div class="cfg-body">
-      <div class="soundline" title="Plays a short notification sound before narration.">
-        <label for="cueEnabled">🔔 Sound before speech</label>
-        <input type="range" id="cueVolume" class="minivol" min="0" max="1" step="0.05" title="Cue volume" />
-        <span class="rngval mini" id="cueVolumeOut">0.80</span>
-        <div class="switch"><input type="checkbox" id="cueEnabled" /></div>
-      </div>
-      <div class="soundline" title="Plays an attention chime when Lovable shows an error requiring a click on 'Try to fix'.">
-        <label for="errorAlertEnabled">🚨 Error alert</label>
-        <input type="range" id="errorVolume" class="minivol" min="0" max="1" step="0.05" title="Error alert volume" />
-        <span class="rngval mini" id="errorVolumeOut">0.40</span>
-        <div class="switch"><input type="checkbox" id="errorAlertEnabled" /></div>
-      </div>
+  <!-- sounds: cue + error alert, toggle and inline volume (always visible) -->
+  <div class="section-h" title="Short sound before narration and error chime. Toggle and volume inline.">Sounds &amp; alerts</div>
+  <div class="soundgroup">
+    <div class="soundline" title="Plays a short notification sound before narration.">
+      <label for="cueEnabled">🔔 Ping first</label>
+      <input type="range" id="cueVolume" class="minivol" min="0" max="1" step="0.05" title="Cue volume" />
+      <span class="rngval mini" id="cueVolumeOut">0.80</span>
+      <div class="switch"><input type="checkbox" id="cueEnabled" /></div>
     </div>
-  </details>
+    <div class="soundline" title="Plays an attention chime when Lovable shows an error requiring a click on 'Try to fix'.">
+      <label for="errorAlertEnabled">🚨 Error alert</label>
+      <input type="range" id="errorVolume" class="minivol" min="0" max="1" step="0.05" title="Error alert volume" />
+      <span class="rngval mini" id="errorVolumeOut">0.40</span>
+      <div class="switch"><input type="checkbox" id="errorAlertEnabled" /></div>
+    </div>
+  </div>
 
   <!-- voice & engine config (set-once, collapsed) -->
   <details class="cfg" id="cfgVoice">
@@ -339,44 +349,44 @@
 
   <!-- ELEVENLABS -->
   <section class="vpanel" id="panelEleven" hidden>
+    <div class="field nv" title="Generation model. Flash = fastest + cheapest, multilingual. Recommended for live narration.">
+      <label for="elevenModel">Model</label>
+      <select id="elevenModel">
+        <option value="eleven_flash_v2_5">Flash v2.5 (Recommended)</option>
+        <option value="eleven_turbo_v2_5">Turbo v2.5</option>
+        <option value="eleven_multilingual_v2">Multilingual v2</option>
+        <option value="eleven_v3">v3 (alpha)</option>
+      </select>
+    </div>
+
     <div class="voicerow" title="Voices from your account (cached). Use ↻ if you add new voices. Configure the API key in ⚙ Settings.">
       <label for="elevenVoiceId">Voice</label>
       <select id="elevenVoiceId"><option value="">— no voices —</option></select>
       <button class="ghost mini" id="refreshVoices" title="Reload voices from the API (bypass cache).">↻</button>
     </div>
 
-    <div class="field nv" title="Generation model. Multilingual = quality; Turbo/Flash = fast and cheap.">
-      <label for="elevenModel">Model</label>
-      <select id="elevenModel">
-        <option value="eleven_multilingual_v2">Multilingual v2</option>
-        <option value="eleven_turbo_v2_5">Turbo v2.5</option>
-        <option value="eleven_flash_v2_5">Flash v2.5</option>
-        <option value="eleven_v3">v3 (alpha)</option>
-      </select>
-    </div>
-
     <div class="field" title="Voice consistency. Low = expressive/variable; High = flat/predictable.">
       <label for="elevenStability">Stability</label>
       <input type="range" id="elevenStability" min="0" max="1" step="0.01" />
-      <span class="rngval" id="stabOut">0.50</span>
+      <span class="rngval" id="stabOut">0.20</span>
     </div>
 
     <div class="field" title="How closely it mimics the original voice. High = more faithful to the cloned voice.">
       <label for="elevenSimilarity">Similarity</label>
       <input type="range" id="elevenSimilarity" min="0" max="1" step="0.01" />
-      <span class="rngval" id="simOut">0.75</span>
+      <span class="rngval" id="simOut">0.20</span>
     </div>
 
     <div class="field" title="Style/emotion exaggeration (v2+). Higher = more dramatic, less stable.">
       <label for="elevenStyle">Style</label>
       <input type="range" id="elevenStyle" min="0" max="1" step="0.01" />
-      <span class="rngval" id="styleOut">0.00</span>
+      <span class="rngval" id="styleOut">0.50</span>
     </div>
 
-    <div class="field" title="Speech rate (0.7 to 1.2). 1.00 = normal.">
+    <div class="field" title="Speech rate. 1.00 = normal; up to 3.00 for faster narration.">
       <label for="elevenSpeed">Speed</label>
-      <input type="range" id="elevenSpeed" min="0.7" max="1.2" step="0.01" />
-      <span class="rngval" id="elevenSpeedOut">1.00</span>
+      <input type="range" id="elevenSpeed" min="0.5" max="3" step="0.05" />
+      <span class="rngval" id="elevenSpeedOut">1.10</span>
     </div>
 
     <div class="inline" title="Reinforces similarity to the original voice and clarity, at a slight latency cost.">
@@ -384,8 +394,7 @@
     </div>
 
     <div class="btnrow">
-      <button class="act ghost" id="testEleven" title="Play sample phrase with the ElevenLabs voice. Consumes credits.">▶ Test</button>
-      <button class="act ghost mini" id="resetEleven" title="Reset ElevenLabs parameters to defaults.">↺ Reset</button>
+      <button class="act ghost" id="resetEleven" title="Reset ElevenLabs parameters to defaults.">↺ Reset to recommended</button>
     </div>
   </section>
     </div>
@@ -413,14 +422,6 @@
     <div class="modal">
       <button type="button" class="modal-x" id="settingsClose" title="Close" aria-label="Close">✕</button>
       <h2>Settings</h2>
-
-      <h3>Language</h3>
-      <div class="langbar" title="Language used by BOTH engines (native voice and ElevenLabs).">
-        <div class="dropdown" id="langDrop">
-          <button type="button" class="dd-btn" id="langBtn"></button>
-          <div class="dd-list" id="langList" hidden></div>
-        </div>
-      </div>
 
       <h3>ElevenLabs API key</h3>
       <div class="keystatus">

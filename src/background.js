@@ -42,7 +42,7 @@ const INSTALL_SEED = {
   errorAlertEnabled: true
 };
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
   chrome.storage.sync.get({ lang: "" }, (st) => {
     if (st.lang) return; // já configurado: respeita a escolha do usuário
     let ui = "";
@@ -55,6 +55,17 @@ chrome.runtime.onInstalled.addListener(() => {
     for (const k in INSTALL_SEED) if (st[k] === undefined) patch[k] = INSTALL_SEED[k];
     if (Object.keys(patch).length) chrome.storage.sync.set(patch);
   });
+
+  // Primeira instalação: abre o onboarding em tela cheia (chave da ElevenLabs).
+  // Só na instalação real, e só se ainda não concluído.
+  if (details && details.reason === "install") {
+    chrome.storage.local.get({ onboardingDone: false }, (st) => {
+      if (st.onboardingDone) return;
+      try {
+        chrome.tabs.create({ url: chrome.runtime.getURL("popup/onboarding.html") });
+      } catch (_) {}
+    });
+  }
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
