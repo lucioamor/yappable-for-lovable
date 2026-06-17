@@ -1336,10 +1336,41 @@
   // Cabeçalhos de ação genéricos: não valem uma leitura sozinhos.
   const RE_PROGRESS_NOISE = /^(working|thinking|loading|thought.*)\.{0,3}$/i;
 
-  // Extrai o snippet de progresso da mensagem do agente EM CURSO. Âncora
-  // primária: .active-turn (turno corrente); fallback: mais recente por top.
+  // Widget novo de "background task" (barra flutuante acima do #chat-input).
+  // Vive FORA da mensagem do agente, então o varredor de mensagem não o alcança.
+  // Âncora semântica estável: o status sr-only "N background task(s)" (sobrevive
+  // a rebuild de CSS). Anatomia de cada task:
+  //   ul.flex-col-reverse > li > button
+  //     <span ícone>            -> spinner (task-status-spin) / check / erro
+  //     <span ...truncate>      -> TÍTULO<span.text-muted-foreground>: DESCRIÇÃO</span>
+  // Lê a DESCRIÇÃO (muted, preferida) ou o TÍTULO. Dedup/throttle de
+  // tryNarrateProgress evita reler a mesma linha. Devolve null se não houver
+  // widget.
+  function extractTaskWidgetProgress() {
+    const status = [...document.querySelectorAll('[role="status"][aria-live]')]
+      .find((s) => /background task/i.test(s.textContent || ""));
+    if (!status) return null;
+    const scope = status.parentElement || status;
+    const btn = [...scope.querySelectorAll("li button")].pop();
+    if (!btn) return null;
+    const muted = btn.querySelector("span.text-muted-foreground");
+    const desc = muted ? cleanText(muted.textContent).replace(/^[\s:]+/, "") : "";
+    if (desc && !RE_PROGRESS_NOISE.test(desc)) return desc;
+    // título = wrapper do texto, descontando o trecho muted da descrição
+    const wrap = muted ? muted.parentElement : btn.querySelector("span.truncate");
+    let title = "";
+    if (wrap) {
+      const clone = wrap.cloneNode(true);
+      clone.querySelectorAll("span.text-muted-foreground").forEach((n) => n.remove());
+      title = cleanText(clone.textContent);
+    }
+    return (title && !RE_PROGRESS_NOISE.test(title)) ? title : null;
+  }
+
+  // Extrai o snippet de progresso da task EM CURSO. Tenta primeiro o widget
+  // flutuante novo; cai no layout antigo (task dentro da mensagem do agente).
   //
-  // Anatomia do botão de task em andamento (observada no DOM real):
+  // Layout antigo — anatomia do botão de task em andamento:
   //   button[aria-label^="Open background task"]
   //     shimmer linha 1 -> cabeçalho de ação ("Working...", "Read arquivo.tsx")
   //     shimmer linha 2 -> DESCRIÇÃO rica ("Implementing onboarding ... now")
@@ -1347,6 +1378,8 @@
   // Se já concluiu (sem shimmer), devolve null — a conclusão é tratada pelo
   // caminho normal de narração.
   function extractProgress() {
+    const widget = extractTaskWidgetProgress();
+    if (widget) return widget;
     const m = activeTurnAgentMessage() || agentMessages().pop();
     if (!m) return null;
     const taskBtn = m.querySelector('button[aria-label^="Open background task"]');
