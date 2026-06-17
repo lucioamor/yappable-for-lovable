@@ -1343,10 +1343,10 @@
   //   ul.flex-col-reverse > li > button
   //     <span ícone>            -> spinner (task-status-spin) / check / erro
   //     <span ...truncate>      -> TÍTULO<span.text-muted-foreground>: DESCRIÇÃO</span>
-  // Lê a DESCRIÇÃO (muted, preferida) ou o TÍTULO. Dedup/throttle de
-  // tryNarrateProgress evita reler a mesma linha. Devolve null se não houver
-  // widget.
-  function extractTaskWidgetProgress() {
+  // Devolve { title, desc } (campos vazios filtrados por ruído) ou null se não há
+  // widget. O título é o RÓTULO da tarefa (lido uma vez); a descrição muda a cada
+  // passo e é lida a cada mudança — quem cuida disso é narrateTaskWidget.
+  function extractTaskWidget() {
     const status = [...document.querySelectorAll('[role="status"][aria-live]')]
       .find((s) => /background task/i.test(s.textContent || ""));
     if (!status) return null;
@@ -1354,8 +1354,8 @@
     const btn = [...scope.querySelectorAll("li button")].pop();
     if (!btn) return null;
     const muted = btn.querySelector("span.text-muted-foreground");
-    const desc = muted ? cleanText(muted.textContent).replace(/^[\s:]+/, "") : "";
-    if (desc && !RE_PROGRESS_NOISE.test(desc)) return desc;
+    let desc = muted ? cleanText(muted.textContent).replace(/^[\s:]+/, "") : "";
+    if (desc && RE_PROGRESS_NOISE.test(desc)) desc = "";
     // título = wrapper do texto, descontando o trecho muted da descrição
     const wrap = muted ? muted.parentElement : btn.querySelector("span.truncate");
     let title = "";
@@ -1364,13 +1364,15 @@
       clone.querySelectorAll("span.text-muted-foreground").forEach((n) => n.remove());
       title = cleanText(clone.textContent);
     }
-    return (title && !RE_PROGRESS_NOISE.test(title)) ? title : null;
+    if (title && RE_PROGRESS_NOISE.test(title)) title = "";
+    return (title || desc) ? { title, desc } : null;
   }
 
-  // Extrai o snippet de progresso da task EM CURSO. Tenta primeiro o widget
-  // flutuante novo; cai no layout antigo (task dentro da mensagem do agente).
+  // Extrai o snippet de progresso da task EM CURSO no LAYOUT ANTIGO (task dentro
+  // da mensagem do agente). O widget flutuante novo é tratado à parte em
+  // narrateTaskWidget — aqui é só fallback.
   //
-  // Layout antigo — anatomia do botão de task em andamento:
+  // Anatomia do botão de task em andamento (layout antigo):
   //   button[aria-label^="Open background task"]
   //     shimmer linha 1 -> cabeçalho de ação ("Working...", "Read arquivo.tsx")
   //     shimmer linha 2 -> DESCRIÇÃO rica ("Implementing onboarding ... now")
@@ -1378,8 +1380,6 @@
   // Se já concluiu (sem shimmer), devolve null — a conclusão é tratada pelo
   // caminho normal de narração.
   function extractProgress() {
-    const widget = extractTaskWidgetProgress();
-    if (widget) return widget;
     const m = activeTurnAgentMessage() || agentMessages().pop();
     if (!m) return null;
     const taskBtn = m.querySelector('button[aria-label^="Open background task"]');
@@ -1419,8 +1419,40 @@
     drain();
   }
 
+  // Estado do widget de task: rótulo (título) é lido UMA vez; a descrição é lida
+  // a cada mudança, sem repetir o rótulo.
+  let lastTaskTitle = "";
+  let lastTaskDesc = "";
+
+  // Narra o widget novo. Título novo -> anuncia a tarefa uma vez (com a 1ª
+  // descrição junta, num único enfileiramento — dropTransient descartaria um 2º).
+  // Mesma tarefa, descrição mudou -> lê só a descrição. SEM o throttle de 30s: o
+  // ritmo já é dado pela fila (um item por vez) + single-slot (só o estado mais
+  // recente sobrevive enquanto a fala anterior toca).
+  function narrateTaskWidget(w) {
+    if (w.title && w.title !== lastTaskTitle) {
+      lastTaskTitle = w.title;
+      lastTaskDesc = w.desc || "";
+      const lead = `Current task: ${w.title}.`;
+      enqueueVerbose(w.desc ? `${lead} ${w.desc}` : lead);
+      return;
+    }
+    if (w.desc && w.desc !== lastTaskDesc) {
+      lastTaskDesc = w.desc;
+      enqueueVerbose(w.desc);
+    }
+  }
+
   function tryNarrateProgress() {
     if (!ready || !cfg.enabled || !(cfg.verboseEnabled || allowActiveTaskRead())) return;
+    // Widget flutuante novo: rótulo uma vez, descrição a cada mudança (pacing
+    // pela fila, sem o throttle de 30s — senão perderia os passos rápidos).
+    const w = extractTaskWidget();
+    if (w) { narrateTaskWidget(w); return; }
+    // widget sumiu (tarefa concluída/removida): rearma p/ a próxima tarefa, mesmo
+    // que reaproveite o mesmo título.
+    if (lastTaskTitle || lastTaskDesc) { lastTaskTitle = ""; lastTaskDesc = ""; }
+    // layout antigo (task dentro da mensagem): mantém o throttle de 30s.
     const snippet = extractProgress();
     if (!snippet || snippet === lastVerbose) return;
     // throttle: no máx. 1 leitura de progresso a cada 30s (evita tagarelar)
