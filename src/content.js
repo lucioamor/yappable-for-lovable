@@ -1492,6 +1492,17 @@
     });
   }
 
+  // Traduz e enfileira uma fala ONE-SHOT (frase fixa do sistema: monitor de
+  // silêncio, alerta de erro). Só guarda de epoch — NÃO usa a guarda de sequência
+  // do progresso (senão um update de progresso no mesmo tick descartaria a fala).
+  function enqueueLocalized(text) {
+    const epoch = playbackEpoch;
+    localizeLine(text).then((out) => {
+      if (epoch !== playbackEpoch) return;
+      enqueueVerbose(out);
+    });
+  }
+
   // Estado do widget de task: rótulo (título) é lido UMA vez; a descrição é lida
   // a cada mudança, sem repetir o rótulo.
   let lastTaskTitle = "";
@@ -1595,7 +1606,7 @@
     // narra pela FILA ÚNICA (respeita o motor escolhido; fallback nativo é do
     // drain). Delay curto só pra não falar por cima do bipe.
     setTimeout(() => {
-      enqueue(phrase, null, { kind: "transient" });
+      enqueueLocalized(phrase);
     }, 450);
     try { chrome.storage.local.set({ lovableNarratorLastError: { at: Date.now(), detail } }); } catch (_) {}
   }
@@ -1781,7 +1792,7 @@
   self.LovableNarrator = {
     say(text) {
       if (!cfg.enabled) return;
-      enqueueVerbose(text);
+      enqueueLocalized(text);
     },
     isSpeaking() {
       return speaking;
