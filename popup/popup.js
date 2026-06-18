@@ -14,6 +14,7 @@ const DEFAULTS = {
   errorAlertEnabled: true,
   errorVolume: 0.4,
   verboseEnabled: false,
+  waveformEnabled: true, // barra animada no topo durante a fala
   elevenKey: "",
   elevenVoiceId: "cgSgspJ2msm6clMCkdW9", // Jessica (default voice, expressiva/playful)
   elevenModel: "eleven_flash_v2_5",
@@ -83,12 +84,9 @@ const GROUPS = {
 
 const SAMPLE = "Yappable is active. This is the selected voice.";
 const VOICE_CACHE_KEY = "elevenVoicesCache"; // chrome.storage.local: { key, at, voices:[{id,name,lang}] }
-// Payload de diagnostico publicado por content.js: ultimo output observado,
-// variantes por modo de "O que narrar" e status do resumo local.
 const LAST_OUTPUT_KEY = "lovableNarratorLastOutput";
 const MAX_DELAY_MS = 3000;
 const MODES = ["fast", "beginner", "advanced", "completo"];
-// Migração: eixos antigos (announce × lens) e o par anterior (resumo/completo).
 const LEGACY_TO_MODE = {
   raw: "completo", full: "completo", technical: "completo",
   resumo: "beginner", summary: "beginner", title: "beginner",
@@ -106,9 +104,9 @@ let lastOutput = null;
 
 function set(key, value) {
   cfg[key] = value;
-  // elevenKey is stored in local (never sync) to keep credentials off cloud sync.
-  if (key === "elevenKey") {
-    chrome.storage.local.set({ elevenKey: value });
+  // elevenKey and debug stored in local (credentials + debug state off sync).
+  if (key === "elevenKey" || key === "debug") {
+    chrome.storage.local.set({ [key]: value });
   } else {
     chrome.storage.sync.set({ [key]: value });
   }
@@ -146,19 +144,18 @@ function bindRange(id, outId, digits = 2) {
   el.addEventListener("change", () => set(id, Number(el.value)));
 }
 
-// master on/off: rótulo Ativado/Desativado ao lado do switch
+// master on/off
 function reflectEnabledState() {
   const on = $("enabled").checked;
   const el = $("enabledState");
   el.textContent = on ? "Enabled" : "Disabled";
   el.classList.toggle("on", on);
   el.classList.toggle("off", !on);
-  $("masterCard").classList.toggle("on", on); // ring amber no herói quando ativo
+  $("masterCard").classList.toggle("on", on);
 }
 $("enabled").addEventListener("change", reflectEnabledState);
 
-// engine: dois botões grandes (Nativa / ElevenLabs) são a fonte única. O painel
-// de ajustes do motor inativo some — não faz sentido configurar o que não usa.
+// engine
 function reflectEngine() {
   const eleven = cfg.engine === "elevenlabs";
   $("segNative").classList.toggle("on", !eleven);
@@ -170,8 +167,6 @@ function reflectEngine() {
   reflectSummaries();
 }
 
-// Resumo de estado nos grupos recolhidos: o usuário vê o que está ativo sem
-// abrir. Motor + idioma no grupo de voz; chips on/off no grupo de sons.
 function reflectSummaries() {
   const vs = $("voiceState");
   if (vs) {
@@ -188,7 +183,6 @@ function setEngine(engine) {
 $("segNative").addEventListener("click", () => setEngine("native"));
 $("segEleven").addEventListener("click", () => setEngine("elevenlabs"));
 
-// badge do herói: abre o grupo Voice & engine e rola até ele (atalho pro seletor)
 $("engineBadge").addEventListener("click", () => {
   const d = $("cfgVoice");
   if (d) {
@@ -197,8 +191,6 @@ $("engineBadge").addEventListener("click", () => {
   }
 });
 
-// Trocar o modo: atualiza o texto lido E renarra com o motor ativo (o usuário
-// pediu ouvir o modo no ato — respeitando o engine escolhido).
 function triggerNarrateNow() {
   if (!cfg.enabled) return;
   if (!chrome.tabs?.query) return;
@@ -221,7 +213,6 @@ document.querySelectorAll('input[name="mode"]').forEach((r) => {
   });
 });
 
-// origem do texto lido: determinístico (heurística) vs Nano (LLM local on-device)
 function originLabel(status) {
   if (status === "nano") return "Nano (local)";
   if (status === "deterministic") return "Deterministic";
@@ -247,8 +238,6 @@ function requestLastOutputFromTab() {
   if (!chrome.tabs?.query) return;
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
     if (!tab?.id) return;
-    // Storage cobre o popup fechado; esta consulta cobre o caso em que a aba
-    // tem um payload mais novo em memoria que ainda nao foi refletido no popup.
     chrome.tabs.sendMessage(tab.id, { type: "LN_GET_LAST_OUTPUT" }, (response) => {
       if (chrome.runtime.lastError || !response?.output) return;
       lastOutput = response.output;
@@ -260,13 +249,30 @@ function requestLastOutputFromTab() {
 function reflectSeed() { $("elevenSeed").disabled = cfg.elevenSeedRandom; }
 
 // ---------------------------------------------------------------------------
-// Dropdown de idioma (universal: nativa + ElevenLabs)
+// Easter egg: 5 rapid clicks on the logo → toggle debug mode
+// ---------------------------------------------------------------------------
+let _dbgClicks = 0, _dbgTimer = null;
+$("brandTitle").addEventListener("click", () => {
+  _dbgClicks++;
+  clearTimeout(_dbgTimer);
+  _dbgTimer = setTimeout(() => { _dbgClicks = 0; }, 2000);
+  if (_dbgClicks >= 5) {
+    _dbgClicks = 0;
+    const next = !cfg.debug;
+    set("debug", next);
+    cfg.debug = next;
+    $("debugPanel").hidden = !next;
+    msg(next ? "🔧 Debug on" : "Debug off");
+    setTimeout(() => msg(""), 2000);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Dropdown de idioma
 // ---------------------------------------------------------------------------
 function buildLangDropdown() {
   const list = $("langList");
   list.replaceChildren();
-  // sem opção "auto" explícita: o idioma detectado já entra pré-selecionado na
-  // lista (resolvido em load()). O usuário só vê idiomas concretos para marcar.
   for (const [code, cc, name] of LANGS) {
     const o = document.createElement("div");
     o.className = "dd-opt";
@@ -287,24 +293,23 @@ function reflectLang() {
   flag.className = "flag-pill";
   const [, cc] = LANGS.find((l) => l[0] === resolved) || LANGS[0];
   flag.textContent = cc;
-  // topbar pill: só a bandeira (compacto); o nome aparece na lista aberta.
   $("langBtn").replaceChildren(flag);
   $("langBtn").title = (LANGS.find((l) => l[0] === resolved) || LANGS[0])[2];
   $("langList").querySelectorAll(".dd-opt").forEach((o) => o.classList.toggle("sel", o.dataset.code === resolved));
-  populateNativeVoices(); // lista de vozes nativas segue o idioma
+  populateNativeVoices();
   reflectSummaries();
 }
 $("langBtn").addEventListener("click", (e) => { e.stopPropagation(); $("langList").hidden = !$("langList").hidden; });
 document.addEventListener("click", () => { $("langList").hidden = true; });
 
 // ---------------------------------------------------------------------------
-// Settings modal (API key + avançado)
+// Settings modal
 // ---------------------------------------------------------------------------
 function reflectKeyStatus() {
   const has = !!cfg.elevenKey;
   $("keyDot").classList.toggle("ok", has);
   $("keyTxt").textContent = has ? "Configured" : "No API key";
-  $("keyAffiliate").hidden = has; // link de afiliado só quando falta a chave
+  $("keyAffiliate").hidden = has;
 }
 $("openSettings").addEventListener("click", () => {
   $("elevenKey").value = cfg.elevenKey;
@@ -327,10 +332,9 @@ $("elevenKey").addEventListener("change", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Vozes nativas (Web Speech API)
+// Vozes nativas
 // ---------------------------------------------------------------------------
 const normLang = (l) => String(l || "").toLowerCase().replace(/_/g, "-");
-// ordena por provedor: Google > Microsoft/Natural > resto (mesma heurística do content.js)
 function rankVoice(v) {
   if (/google/i.test(v.name)) return 0;
   if (/microsoft|natural/i.test(v.name)) return 1;
@@ -341,12 +345,9 @@ function populateNativeVoices() {
   if (!sel) return;
   const cur = cfg.nativeVoice;
   const all = speechSynthesis.getVoices();
-  const want = normLang(resolveLang(cfg.lang)); // ex.: "pt-br"
+  const want = normLang(resolveLang(cfg.lang));
   const base = want.split("-")[0];
 
-  // só vozes do idioma selecionado: região exata tem prioridade; senão mesmo
-  // idioma em qualquer região. Sem match (idioma não instalado) -> mostra todas
-  // pra não travar o usuário.
   const exactRegion = all.filter((v) => normLang(v.lang) === want);
   const sameBase = all.filter((v) => normLang(v.lang).split("-")[0] === base);
   let list = exactRegion.length ? exactRegion : sameBase;
@@ -365,13 +366,12 @@ function populateNativeVoices() {
     o.textContent = noMatch ? `${v.name} (${v.lang})` : v.name;
     sel.appendChild(o);
   }
-  // mantém a escolha do usuário só se ainda válida para este idioma; senão Auto.
   sel.value = list.some((v) => v.name === cur) ? cur : "";
 }
 speechSynthesis.onvoiceschanged = populateNativeVoices;
 
 // ---------------------------------------------------------------------------
-// Vozes ElevenLabs (nomes, cacheadas em chrome.storage.local)
+// Vozes ElevenLabs
 // ---------------------------------------------------------------------------
 function populateElevenVoices(voices) {
   const sel = $("elevenVoiceId");
@@ -425,7 +425,7 @@ function loadElevenVoices(force) {
 }
 
 // ---------------------------------------------------------------------------
-// Reset (por grupo)
+// Reset
 // ---------------------------------------------------------------------------
 function resetGroup(group) {
   const keys = GROUPS[group] || [];
@@ -472,6 +472,7 @@ function reflectUI() {
   $("errorAlertEnabled").checked = cfg.errorAlertEnabled;
   $("errorVolume").value = cfg.errorVolume; $("errorVolumeOut").textContent = fmt(cfg.errorVolume, 2);
   $("verboseEnabled").checked = cfg.verboseEnabled;
+  $("waveformEnabled").checked = cfg.waveformEnabled;
   $("delayMs").value = cfg.delayMs; $("delayMsOut").textContent = fmt(cfg.delayMs, 0);
 
   // nativa
@@ -494,13 +495,16 @@ function reflectUI() {
   reflectSeed();
   reflectKeyStatus();
   updateReadDebug();
+
+  // debug panel visibility
+  $("debugPanel").hidden = !cfg.debug;
 }
 
 // ---------------------------------------------------------------------------
 // Carregar config
 // ---------------------------------------------------------------------------
 function load() {
-  // Migration: if elevenKey still in sync from before Fase 5, move to local.
+  // Migration: elevenKey from sync → local.
   chrome.storage.sync.get({ elevenKey: "" }, (syncData) => {
     if (syncData.elevenKey) {
       chrome.storage.local.set({ elevenKey: syncData.elevenKey });
@@ -513,8 +517,8 @@ function load() {
     delete cfg.announce;
     delete cfg.lens;
     cfg.mode = normalizeMode(stored.mode || stored.announce);
-    cfg.elevenKey = ""; // will be overwritten from local below
-    // "auto" -> idioma concreto detectado, já marcado na lista (sem opção "auto")
+    cfg.elevenKey = "";
+    cfg.debug = false; // loaded from local below
     if (!cfg.lang || cfg.lang === "auto") {
       cfg.lang = resolveLang("auto");
       chrome.storage.sync.set({ lang: cfg.lang });
@@ -533,10 +537,12 @@ function load() {
     }
   });
 
-  chrome.storage.local.get([LAST_OUTPUT_KEY, "elevenKey"], (stored) => {
+  chrome.storage.local.get([LAST_OUTPUT_KEY, "elevenKey", "debug"], (stored) => {
     lastOutput = stored[LAST_OUTPUT_KEY] || null;
     cfg.elevenKey = stored.elevenKey || "";
+    cfg.debug = !!stored.debug;
     reflectKeyStatus();
+    $("debugPanel").hidden = !cfg.debug;
     if (cfg.elevenKey) loadElevenVoices(false);
     updateReadDebug();
     requestLastOutputFromTab();
@@ -544,21 +550,24 @@ function load() {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== "local") return;
-  if (changes[LAST_OUTPUT_KEY]) {
-    lastOutput = changes[LAST_OUTPUT_KEY].newValue || null;
-    updateReadDebug();
-  }
-  if (changes.elevenKey) {
-    cfg.elevenKey = changes.elevenKey.newValue || "";
-    reflectKeyStatus();
+  if (area === "local") {
+    if (changes[LAST_OUTPUT_KEY]) {
+      lastOutput = changes[LAST_OUTPUT_KEY].newValue || null;
+      updateReadDebug();
+    }
+    if (changes.elevenKey) {
+      cfg.elevenKey = changes.elevenKey.newValue || "";
+      reflectKeyStatus();
+    }
+    if (changes.debug) {
+      cfg.debug = !!changes.debug.newValue;
+      $("debugPanel").hidden = !cfg.debug;
+    }
   }
 });
 
 // ---------------------------------------------------------------------------
-// Preview de sons: toca o respectivo áudio ao ligar o toggle ou ao terminar de
-// mexer no volume (debounce). Cue = mp3 da extensão; erro = bipe sintetizado
-// (mesmo desenho do content.js: dois toques descendentes 880→660Hz).
+// Sound previews
 // ---------------------------------------------------------------------------
 let _previewAudioCtx = null;
 function previewCue() {
@@ -590,10 +599,8 @@ function debounce(fn, ms) {
   let t = null;
   return () => { clearTimeout(t); t = setTimeout(fn, ms); };
 }
-// toggles: só ao LIGAR
 $("cueEnabled").addEventListener("change", (e) => { if (e.target.checked) previewCue(); });
 $("errorAlertEnabled").addEventListener("change", (e) => { if (e.target.checked) previewErrorChime(); });
-// volumes: ao terminar de arrastar (debounce sobre 'input')
 $("cueVolume").addEventListener("input", debounce(previewCue, 350));
 $("errorVolume").addEventListener("input", debounce(previewErrorChime, 350));
 
@@ -604,6 +611,7 @@ bindToggle("enabled");
 bindToggle("cueEnabled");
 bindToggle("errorAlertEnabled");
 bindToggle("verboseEnabled");
+bindToggle("waveformEnabled");
 bindToggle("elevenSpeakerBoost");
 bindToggle("elevenSeedRandom");
 bindSelect("nativeVoice");

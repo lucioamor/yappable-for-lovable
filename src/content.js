@@ -30,6 +30,7 @@
     // .text-muted-foreground + o cabeçalho de ação "Edited <arquivo>"). Toggle
     // separado: pode estar ligado mesmo com a narração final, ou sozinho.
     verboseEnabled: false,
+    waveformEnabled: true, // barra animada no topo durante a fala
 
     elevenKey: "",
     elevenVoiceId: "cgSgspJ2msm6clMCkdW9", // Jessica (default voice, expressiva/playful)
@@ -94,13 +95,15 @@
     if (stored.mode !== cfg.mode) chrome.storage.sync.set({ mode: cfg.mode });
     if (stored.announce || stored.lens) chrome.storage.sync.remove(["announce", "lens"]);
   });
-  // elevenKey lives in storage.local (Fase 5 — keeps credentials off sync).
-  chrome.storage.local.get({ elevenKey: "" }, (local) => {
+  // elevenKey and debug live in storage.local (credentials off sync; debug not roamed).
+  chrome.storage.local.get({ elevenKey: "", debug: false }, (local) => {
     cfg.elevenKey = local.elevenKey || "";
+    cfg.debug = !!local.debug;
   });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local") {
       if (changes.elevenKey) cfg.elevenKey = changes.elevenKey.newValue || "";
+      if (changes.debug) cfg.debug = !!changes.debug.newValue;
       return;
     }
     if (area !== "sync") return;
@@ -211,6 +214,7 @@
   }
 
   function _wfStartNative() {
+    if (!cfg.waveformEnabled) return;
     _wfEnsure();
     _wfCtx = _wfCanvas.getContext("2d");
     if (_wfAnimId) { cancelAnimationFrame(_wfAnimId); _wfAnimId = null; }
@@ -220,6 +224,7 @@
   }
 
   function _wfStartEleven(audioEl) {
+    if (!cfg.waveformEnabled) return;
     _wfEnsure();
     _wfCtx = _wfCanvas.getContext("2d");
     if (_wfAnimId) { cancelAnimationFrame(_wfAnimId); _wfAnimId = null; }
