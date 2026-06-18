@@ -1513,9 +1513,22 @@
   let lastTaskTitle = "";
   let lastTaskDesc = "";
 
+  // Jaccard sobre palavras significativas (>2 chars). Retorna 0..1.
+  function descSimilarity(a, b) {
+    const words = (s) => new Set(
+      s.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter((w) => w.length > 2)
+    );
+    const wa = words(a), wb = words(b);
+    if (!wa.size || !wb.size) return 0;
+    let inter = 0;
+    for (const w of wa) if (wb.has(w)) inter++;
+    return inter / (wa.size + wb.size - inter);
+  }
+
   // Narra o widget novo. Título novo -> anuncia a tarefa uma vez (com a 1ª
   // descrição junta, num único enfileiramento — dropTransient descartaria um 2º).
-  // Mesma tarefa, descrição mudou -> lê só a descrição. SEM o throttle de 30s: o
+  // Mesma tarefa, descrição mudou -> lê só a descrição, se for suficientemente
+  // diferente da última lida (Jaccard < 0.65). SEM o throttle de 30s: o
   // ritmo já é dado pela fila (um item por vez) + single-slot (só o estado mais
   // recente sobrevive enquanto a fala anterior toca).
   function narrateTaskWidget(w) {
@@ -1527,6 +1540,7 @@
       return;
     }
     if (w.desc && w.desc !== lastTaskDesc) {
+      if (lastTaskDesc && descSimilarity(w.desc, lastTaskDesc) >= 0.65) return;
       lastTaskDesc = w.desc;
       enqueueVerboseLocalized(w.desc);
     }
