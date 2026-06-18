@@ -118,7 +118,19 @@
     // título (rótulo) — ou, se só houver a linha de ação curta, ela vira status.
     if (!t) {
       const w = readTaskWidget();
-      if (w) t = w.title || w.desc;
+      if (w) {
+        // When title is a generic state word ("Working", "Transcribing"), capture
+        // it as taskStatus and fall through to desc as the meaningful label — so
+        // workPhrase() can say "Lovable is transcribing: Updating Petrobras logo."
+        // instead of discarding the desc and falling back to "Lovable is working."
+        if (w.title && RE_TITLE_STATE.test(w.title)) {
+          taskStatus = w.title.toLowerCase().replace(/\.+$/, "");
+          t = w.desc || "";
+          if (!t) return "";
+        } else {
+          t = w.title || w.desc;
+        }
+      }
     }
     if (!t) { taskStatus = ""; return ""; }
     if (RE_TITLE_STATE.test(t)) {
@@ -174,6 +186,7 @@
   // the content script's verbose path reads the actual task line, and silence/
   // stall announcements cover timing separately.
   function workPhrase() {
+    if (taskStatus && taskTitle) return `Lovable is ${taskStatus}: ${taskTitle}.`;
     if (taskStatus) return `Lovable is ${taskStatus}.`;
     if (taskTitle) return `Lovable is working on a task labeled '${taskTitle}'.`;
     return "";
