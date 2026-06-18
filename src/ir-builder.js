@@ -101,15 +101,6 @@
   // Used to separate technical items from UX/product-level descriptions.
   const RE_CODE_TERM = /\b(\.tsx?|\.jsx?|\.css|\.html|\.json|\.md\b|src\/|components\/|pages\/|hooks\/|lib\/|utils\/|import\b|export\b|function\b|const\b|let\b|var\b|async\b|await\b|useState|useEffect|useRef|interface\b)\b/i;
 
-  // Domain → actionable next step. Deterministic, no template numbers.
-  const NEXT_STEP_MAP = {
-    performance: "Run a real performance test — Lighthouse on mobile — before trusting any estimated number.",
-    auth: "Test the full flow: login, logout, and direct access to a protected route without authenticating.",
-    database: "Run the migration in a staging environment and validate the schema before deploying to production.",
-    api: "Test the affected endpoints with real data and verify error handling and edge cases.",
-    seo: "Check title, meta description, and heading structure to avoid ranking loss."
-  };
-
   function buildImpactSlots(changedSlots) {
     // UX/product perspective: high-level text only, no file-level detail.
     const uxSlots = changedSlots.filter(
@@ -119,16 +110,6 @@
     );
     // Fallback: if everything looks code-centric, keep it all (better than silence).
     return uxSlots.length ? uxSlots : changedSlots.slice(0, 2);
-  }
-
-  function buildNextSlots(domains) {
-    return domains
-      .filter((d) => NEXT_STEP_MAP[d])
-      .map((d) => ({
-        text: NEXT_STEP_MAP[d],
-        certainty: "inferred",
-        source: `domain:${d}`
-      }));
   }
 
   function buildChangedSlots(st, taskTitle) {
@@ -167,7 +148,7 @@
         changed,
         impact: buildImpactSlots(changed),
         risk: detectRiskSlots(st, result.body, lang),
-        next: buildNextSlots(domains)
+        next: []
       },
       metrics: extractMetrics(st.expected || ""),
 

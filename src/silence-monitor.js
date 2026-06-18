@@ -47,7 +47,31 @@
   function cleanStr(s) { return String(s || "").replace(/\s+/g, " ").trim(); }
 
   function detectShimmer() {
-    return !!document.querySelector(".animate-shimmer-gradient");
+    // "trabalho ativo" no DOM: o shimmer antigo OU o spinner do widget novo de
+    // background task (SVG com animation task-status-spin).
+    return !!document.querySelector(".animate-shimmer-gradient, [style*='task-status-spin']");
+  }
+
+  // Widget novo de background task (barra flutuante acima do chat-input). Mesma
+  // âncora estável do content.js: o status sr-only "N background task(s)".
+  // Devolve { title, desc } ou null.
+  function readTaskWidget() {
+    const status = [...document.querySelectorAll('[role="status"][aria-live]')]
+      .find((s) => /background task/i.test(s.textContent || ""));
+    if (!status) return null;
+    const scope = status.parentElement || status;
+    const btn = [...scope.querySelectorAll("li button")].pop();
+    if (!btn) return null;
+    const muted = btn.querySelector("span.text-muted-foreground");
+    const desc = muted ? cleanStr(muted.textContent).replace(/^[\s:]+/, "") : "";
+    const wrap = muted ? muted.parentElement : btn.querySelector("span.truncate");
+    let title = "";
+    if (wrap) {
+      const c = wrap.cloneNode(true);
+      c.querySelectorAll("span.text-muted-foreground").forEach((n) => n.remove());
+      title = cleanStr(c.textContent);
+    }
+    return (title || desc) ? { title, desc } : null;
   }
 
   function topOf(el) {
@@ -80,14 +104,35 @@
   }
 
   // Generic status words — informative but don't identify the task.
-  // Split: STATE words (thinking, working) are spoken directly; TOOL words (read, edited) are dropped.
-  const RE_TITLE_STATE = /^(thinking|thought.*|working|loading)\.{0,3}$/i;
+  // STATE words are spoken directly as the live action; a single gerund (any
+  // "...ing" word, e.g. "Transcribing") counts too — that's the real on-screen
+  // status, not the canned "working". TOOL words (read, edited) are dropped.
+  const RE_TITLE_STATE = /^([a-zà-ú]+ing|thinking|thought.*|working|loading|trabalhando|pensando|carregando|gerando|escrevendo|lendo|analisando)\.{0,3}$/i;
   const RE_TITLE_NOISE = /^(read|edited?|typecheck)\.{0,3}$/i;
 
   function detectTaskTitle() {
     const scope = latestIncompleteMessage() || document;
     const el = scope.querySelector('[aria-label^="Open background task"]');
-    const t = el ? cleanStr(el.getAttribute("title") || el.textContent) : "";
+    let t = el ? cleanStr(el.getAttribute("title") || el.textContent) : "";
+    // DOM novo: a task vive no widget flutuante (sem o aria-label antigo). Lê o
+    // título (rótulo) — ou, se só houver a linha de ação curta, ela vira status.
+    if (!t) {
+      const w = readTaskWidget();
+      if (w) {
+        // When title is a generic state word ("Working", "Transcribing"), capture
+        // it as taskStatus and fall through to desc as the meaningful label — so
+        // workPhrase() can say "Lovable is transcribing: Updating Petrobras logo."
+        // instead of discarding the desc and falling back to "Lovable is working."
+        if (w.title && RE_TITLE_STATE.test(w.title)) {
+          taskStatus = w.title.toLowerCase().replace(/\.+$/, "");
+          t = w.desc || "";
+          if (!t) return "";
+        } else {
+          t = w.title || w.desc;
+        }
+      }
+    }
+    if (!t) { taskStatus = ""; return ""; }
     if (RE_TITLE_STATE.test(t)) {
       taskStatus = t.toLowerCase().replace(/\.+$/, "");
       return "";
@@ -135,12 +180,16 @@
     return "in progress";
   }
 
-  // Full spoken phrase for the work announcement — avoids "working on a task thinking"
+  // Full spoken phrase for the work announcement. Prefers the REAL on-screen
+  // status (the live action word, e.g. "transcribing") over a generic label.
+  // Returns "" when nothing is readable — we don't invent a hardcoded "working";
+  // the content script's verbose path reads the actual task line, and silence/
+  // stall announcements cover timing separately.
   function workPhrase() {
-    if (taskTitle) return `Lovable is working on a task labeled '${taskTitle}'.`;
-    if (taskStatus === "thinking") return "Lovable is thinking.";
+    if (taskStatus && taskTitle) return `Lovable is ${taskStatus}: ${taskTitle}.`;
     if (taskStatus) return `Lovable is ${taskStatus}.`;
-    return "Lovable is working.";
+    if (taskTitle) return `Lovable is working on a task labeled '${taskTitle}'.`;
+    return "";
   }
 
   // Fala se o debounce permitir.
@@ -226,11 +275,15 @@
     const silenceAnchor = Math.max(silenceStartAt, lastDomMutationAt || 0);
     const silence = inSilence ? n - silenceAnchor : 0;
 
-    // Anúncio de "trabalhando" (uma vez, após DEBOUNCE_MS com shimmer ativo)
+    // Anúncio de "trabalhando" (uma vez, após DEBOUNCE_MS com shimmer ativo).
+    // Só fala se houver status/rótulo real legível — sem frase genérica inventada.
     if (!workAnnounced && shimmer && elapsed >= DEBOUNCE_MS) {
-      workAnnounced = true;
-      trySpeak(workPhrase());
-      return;
+      const phrase = workPhrase();
+      if (phrase) {
+        workAnnounced = true;
+        trySpeak(phrase);
+        return;
+      }
     }
 
     if (!inSilence) return;

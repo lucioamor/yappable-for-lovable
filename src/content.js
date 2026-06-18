@@ -30,6 +30,7 @@
     // .text-muted-foreground + o cabeçalho de ação "Edited <arquivo>"). Toggle
     // separado: pode estar ligado mesmo com a narração final, ou sozinho.
     verboseEnabled: false,
+    waveformEnabled: true, // barra animada no topo durante a fala
 
     elevenKey: "",
     elevenVoiceId: "cgSgspJ2msm6clMCkdW9", // Jessica (default voice, expressiva/playful)
@@ -94,13 +95,15 @@
     if (stored.mode !== cfg.mode) chrome.storage.sync.set({ mode: cfg.mode });
     if (stored.announce || stored.lens) chrome.storage.sync.remove(["announce", "lens"]);
   });
-  // elevenKey lives in storage.local (Fase 5 — keeps credentials off sync).
-  chrome.storage.local.get({ elevenKey: "" }, (local) => {
+  // elevenKey and debug live in storage.local (credentials off sync; debug not roamed).
+  chrome.storage.local.get({ elevenKey: "", debug: false }, (local) => {
     cfg.elevenKey = local.elevenKey || "";
+    cfg.debug = !!local.debug;
   });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local") {
       if (changes.elevenKey) cfg.elevenKey = changes.elevenKey.newValue || "";
+      if (changes.debug) cfg.debug = !!changes.debug.newValue;
       return;
     }
     if (area !== "sync") return;
@@ -211,6 +214,7 @@
   }
 
   function _wfStartNative() {
+    if (!cfg.waveformEnabled) return;
     _wfEnsure();
     _wfCtx = _wfCanvas.getContext("2d");
     if (_wfAnimId) { cancelAnimationFrame(_wfAnimId); _wfAnimId = null; }
@@ -220,6 +224,7 @@
   }
 
   function _wfStartEleven(audioEl) {
+    if (!cfg.waveformEnabled) return;
     _wfEnsure();
     _wfCtx = _wfCanvas.getContext("2d");
     if (_wfAnimId) { cancelAnimationFrame(_wfAnimId); _wfAnimId = null; }
@@ -1331,15 +1336,48 @@
   // ---------------------------------------------------------------------------
   let lastVerbose = ""; // último snippet enfileirado (dedup)
   let lastVerboseAt = 0; // timestamp do último verbose (throttle)
-  const VERBOSE_MIN_INTERVAL = 30000; // mín. 30s entre leituras de progresso
+  const VERBOSE_MIN_INTERVAL = 5000; // mín. 5s entre leituras de progresso (layout antigo)
 
   // Cabeçalhos de ação genéricos: não valem uma leitura sozinhos.
   const RE_PROGRESS_NOISE = /^(working|thinking|loading|thought.*)\.{0,3}$/i;
 
-  // Extrai o snippet de progresso da mensagem do agente EM CURSO. Âncora
-  // primária: .active-turn (turno corrente); fallback: mais recente por top.
+  // Widget novo de "background task" (barra flutuante acima do #chat-input).
+  // Vive FORA da mensagem do agente, então o varredor de mensagem não o alcança.
+  // Âncora semântica estável: o status sr-only "N background task(s)" (sobrevive
+  // a rebuild de CSS). Anatomia de cada task:
+  //   ul.flex-col-reverse > li > button
+  //     <span ícone>            -> spinner (task-status-spin) / check / erro
+  //     <span ...truncate>      -> TÍTULO<span.text-muted-foreground>: DESCRIÇÃO</span>
+  // Devolve { title, desc } (campos vazios filtrados por ruído) ou null se não há
+  // widget. O título é o RÓTULO da tarefa (lido uma vez); a descrição muda a cada
+  // passo e é lida a cada mudança — quem cuida disso é narrateTaskWidget.
+  function extractTaskWidget() {
+    const status = [...document.querySelectorAll('[role="status"][aria-live]')]
+      .find((s) => /background task/i.test(s.textContent || ""));
+    if (!status) return null;
+    const scope = status.parentElement || status;
+    const btn = [...scope.querySelectorAll("li button")].pop();
+    if (!btn) return null;
+    const muted = btn.querySelector("span.text-muted-foreground");
+    let desc = muted ? cleanText(muted.textContent).replace(/^[\s:]+/, "") : "";
+    if (desc && RE_PROGRESS_NOISE.test(desc)) desc = "";
+    // título = wrapper do texto, descontando o trecho muted da descrição
+    const wrap = muted ? muted.parentElement : btn.querySelector("span.truncate");
+    let title = "";
+    if (wrap) {
+      const clone = wrap.cloneNode(true);
+      clone.querySelectorAll("span.text-muted-foreground").forEach((n) => n.remove());
+      title = cleanText(clone.textContent);
+    }
+    if (title && RE_PROGRESS_NOISE.test(title)) title = "";
+    return (title || desc) ? { title, desc } : null;
+  }
+
+  // Extrai o snippet de progresso da task EM CURSO no LAYOUT ANTIGO (task dentro
+  // da mensagem do agente). O widget flutuante novo é tratado à parte em
+  // narrateTaskWidget — aqui é só fallback.
   //
-  // Anatomia do botão de task em andamento (observada no DOM real):
+  // Anatomia do botão de task em andamento (layout antigo):
   //   button[aria-label^="Open background task"]
   //     shimmer linha 1 -> cabeçalho de ação ("Working...", "Read arquivo.tsx")
   //     shimmer linha 2 -> DESCRIÇÃO rica ("Implementing onboarding ... now")
@@ -1386,15 +1424,131 @@
     drain();
   }
 
+  // ---------------------------------------------------------------------------
+  // Tradução de progresso para o idioma do usuário (cfg.lang).
+  // OBJETIVO DA INTERFACE: a fala SEMPRE sai no idioma escolhido no onboarding,
+  // independente do idioma da tela. O Lovable mistura idiomas (PT/EN); estes
+  // snippets de status NUNCA podem ser falados em outra língua. Tradução fiel —
+  // NÃO resume, não acrescenta, não corta. Motor on-device (Prompt API, já
+  // aquecido); cache por (idioma, texto). Sem modelo disponível -> devolve
+  // verbatim (degradação; nunca trava a fala).
+  // ---------------------------------------------------------------------------
+  const _i18nCache = new Map(); // (lang\ntexto) -> tradução
+  const I18N_CACHE_MAX = 60;
+
+  async function localizeLine(text) {
+    const t = cleanText(text);
+    if (!t) return text;
+    const lang = cfg.lang;
+    const key = lang + "\n" + t;
+    if (_i18nCache.has(key)) return _i18nCache.get(key);
+    if (!promptModelReady || !("LanguageModel" in self)) return text; // sem motor
+    const label = langLabel(lang);
+    const system =
+      `You are a translator. Translate the user's text into ${label}. ` +
+      "Output ONLY the translation — no quotes, no notes, no explanation. Preserve the meaning " +
+      "exactly: do NOT summarize, add, or omit anything. Keep it natural to be spoken aloud. " +
+      `If the text is already entirely in ${label}, return it unchanged. ` +
+      "Keep product names, file names, and code identifiers as-is.";
+    const outLang = langCode(lang) || "en";
+    let session = null;
+    try {
+      const baseOpts = { initialPrompts: [{ role: "system", content: system }] };
+      const create = () =>
+        Promise.race([
+          self.LanguageModel.create(
+            _promptLangOptsOk ? { ...baseOpts, outputLanguage: outLang } : baseOpts
+          ),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("translate create timeout")), NANO_TIMEOUT))
+        ]);
+      try {
+        session = await create();
+      } catch (e) {
+        if (_promptLangOptsOk) { _promptLangOptsOk = false; session = await create(); }
+        else throw e;
+      }
+      const out = await Promise.race([
+        session.prompt(t),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("translate timeout")), NANO_TIMEOUT))
+      ]);
+      const res = cleanText(out) || text;
+      if (_i18nCache.size >= I18N_CACHE_MAX) _i18nCache.delete(_i18nCache.keys().next().value);
+      _i18nCache.set(key, res);
+      return res;
+    } catch (err) {
+      console.warn("[Yappable] translate failed, verbatim:", err);
+      return text;
+    } finally {
+      if (session) { try { session.destroy(); } catch (_) {} }
+    }
+  }
+
+  // Enfileira progresso TRADUZIDO. Async: guarda de sequência (descarta a
+  // tradução de um estado obsoleto se outro chegou enquanto traduzia) + guarda de
+  // epoch (não fala progresso depois que a conclusão final preemptou via
+  // stopSpeaking). Mantém o single-slot do enqueueVerbose.
+  let verboseSeq = 0;
+  function enqueueVerboseLocalized(text) {
+    const token = ++verboseSeq;
+    const epoch = playbackEpoch;
+    localizeLine(text).then((out) => {
+      if (token !== verboseSeq || epoch !== playbackEpoch) return;
+      enqueueVerbose(out);
+    });
+  }
+
+  // Traduz e enfileira uma fala ONE-SHOT (frase fixa do sistema: monitor de
+  // silêncio, alerta de erro). Só guarda de epoch — NÃO usa a guarda de sequência
+  // do progresso (senão um update de progresso no mesmo tick descartaria a fala).
+  function enqueueLocalized(text) {
+    const epoch = playbackEpoch;
+    localizeLine(text).then((out) => {
+      if (epoch !== playbackEpoch) return;
+      enqueueVerbose(out);
+    });
+  }
+
+  // Estado do widget de task: rótulo (título) é lido UMA vez; a descrição é lida
+  // a cada mudança, sem repetir o rótulo.
+  let lastTaskTitle = "";
+  let lastTaskDesc = "";
+
+  // Narra o widget novo. Título novo -> anuncia a tarefa uma vez (com a 1ª
+  // descrição junta, num único enfileiramento — dropTransient descartaria um 2º).
+  // Mesma tarefa, descrição mudou -> lê só a descrição. SEM o throttle de 30s: o
+  // ritmo já é dado pela fila (um item por vez) + single-slot (só o estado mais
+  // recente sobrevive enquanto a fala anterior toca).
+  function narrateTaskWidget(w) {
+    if (w.title && w.title !== lastTaskTitle) {
+      lastTaskTitle = w.title;
+      lastTaskDesc = w.desc || "";
+      const lead = `Current task: ${w.title}.`;
+      enqueueVerboseLocalized(w.desc ? `${lead} ${w.desc}` : lead);
+      return;
+    }
+    if (w.desc && w.desc !== lastTaskDesc) {
+      lastTaskDesc = w.desc;
+      enqueueVerboseLocalized(w.desc);
+    }
+  }
+
   function tryNarrateProgress() {
     if (!ready || !cfg.enabled || !(cfg.verboseEnabled || allowActiveTaskRead())) return;
+    // Widget flutuante novo: rótulo uma vez, descrição a cada mudança (pacing
+    // pela fila, sem o throttle de 30s — senão perderia os passos rápidos).
+    const w = extractTaskWidget();
+    if (w) { narrateTaskWidget(w); return; }
+    // widget sumiu (tarefa concluída/removida): rearma p/ a próxima tarefa, mesmo
+    // que reaproveite o mesmo título.
+    if (lastTaskTitle || lastTaskDesc) { lastTaskTitle = ""; lastTaskDesc = ""; }
+    // layout antigo (task dentro da mensagem): mantém o throttle de 30s.
     const snippet = extractProgress();
     if (!snippet || snippet === lastVerbose) return;
     // throttle: no máx. 1 leitura de progresso a cada 30s (evita tagarelar)
     if (Date.now() - lastVerboseAt < VERBOSE_MIN_INTERVAL) return;
     lastVerbose = snippet;
     lastVerboseAt = Date.now();
-    enqueueVerbose(snippet);
+    enqueueVerboseLocalized(snippet);
   }
 
   // ---------------------------------------------------------------------------
@@ -1457,7 +1611,7 @@
     // narra pela FILA ÚNICA (respeita o motor escolhido; fallback nativo é do
     // drain). Delay curto só pra não falar por cima do bipe.
     setTimeout(() => {
-      enqueue(phrase, null, { kind: "transient" });
+      enqueueLocalized(phrase);
     }, 450);
     try { chrome.storage.local.set({ lovableNarratorLastError: { at: Date.now(), detail } }); } catch (_) {}
   }
@@ -1643,7 +1797,7 @@
   self.LovableNarrator = {
     say(text) {
       if (!cfg.enabled) return;
-      enqueueVerbose(text);
+      enqueueLocalized(text);
     },
     isSpeaking() {
       return speaking;

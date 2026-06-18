@@ -26,9 +26,10 @@ Most "read aloud" tools just dump the text into a TTS engine. Yappable **interpr
 
 - Strips markdown, code fences, file names, and symbols that work on screen but sound like static.
 - Restructures the response into the order your brain actually wants: **status → what was done → why it matters → what to validate.**
-- Flags **risk**: unvalidated performance estimates, touched copy, build/schema changes, and SEO edits that deserve a second look before you ship.
+- Speaks in **your language**, always — Lovable often mixes Portuguese and English in the same session; Yappable normalizes everything to the language you picked.
+- Narrates **live progress** as tasks run, not just the final result.
 
-That last part is the point. Reading is a commodity. Knowing *where to look* is the product.
+Reading is a commodity. Knowing *what's happening right now and where to look* is the product.
 
 ---
 
@@ -38,10 +39,12 @@ That last part is the point. Reading is a commodity. Knowing *where to look* is 
 - **Four narration modes** — Fast, Beginner, Advanced, Full (see below)
 - **On-device AI summarization** — uses Chrome's built-in Gemini Nano + Prompt API when available; nothing leaves your machine for this step
 - **Optional ElevenLabs voice** — premium TTS with your own voice and model settings (opt-in)
-- **Risk detector** — flags unvalidated metrics, copy changes, build/schema edits, and SEO touches
-- **Silence monitoring** — speaks up if Lovable stalls mid-task
+- **Always in your language** — all speech (narration, progress, alerts) is translated on-device to the language you selected during onboarding, regardless of what language Lovable outputs
+- **Verbose mode** — reads the background-task widget in real time: task label once, then every description change verbatim as it happens
+- **Live status** — silence monitor reads the actual on-screen status word ("Transcribing", "Generating") instead of a generic phrase
+- **Silence monitoring** — speaks up if Lovable stalls mid-task, with elapsed time and task label
 - **Error alert** — distinct chime when Lovable surfaces a "Try to fix" error that needs your click
-- **Verbose mode** — reads live progress while Lovable is working
+- **Animated waveform bar** — optional visual feedback at the top of the page while narrating (toggle in popup)
 - **Multi-tab awareness** — prefixes the project name when you've got more than one Lovable tab open
 - **100% local by default** — all processing runs in the browser; ElevenLabs is optional
 - **Minimal permissions** — only activates on `lovable.dev`

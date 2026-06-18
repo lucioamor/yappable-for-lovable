@@ -62,7 +62,7 @@
     .lang-pill::after { content: "▾"; color: var(--muted-2); font-size: 11px; }
     .lang-pill .flag-pill { width: 24px; min-width: 24px; }
     #langDrop .dd-list { left: auto; right: 0; width: 220px; }
-    h1 { margin: 0; color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: 0.2em; line-height: 1.1; text-transform: uppercase; }
+    h1 { margin: 0; color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: 0.2em; line-height: 1.1; text-transform: uppercase; cursor: default; user-select: none; }
     .status-line { color: var(--muted-3); font-size: 10px; letter-spacing: 0.03em; }
 
     /* ── generic buttons ────────────────────────────── */
@@ -92,9 +92,6 @@
     .control { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; box-shadow: inset 0 1px 0 rgba(255,255,255,.025); }
     .control.hero { padding: 13px 14px; transition: border-color .2s, box-shadow .2s; }
     .control.hero.on { border-color: var(--accent-line); box-shadow: inset 0 0 0 1px var(--accent-soft), 0 6px 20px -10px rgba(245,158,11,.35); }
-
-    .section-h { font-size: 12.5px; font-weight: 700; color: var(--txt); margin: 16px 0 8px; letter-spacing: .01em; }
-    .section-h .hint { font-weight: 500; color: var(--muted-2); font-size: 11px; }
 
     .master { display: flex; align-items: center; gap: 10px; }
     .master label.cap { margin: 0; font-weight: 700; font-size: 14px; flex: 1; color: var(--txt); }
@@ -134,15 +131,18 @@
     .seg .em { font-size: 15px; }
 
     /* sounds: toggle + mini volume, all inline */
-    .soundgroup { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 10px; padding: 6px 12px 11px; box-shadow: inset 0 1px 0 rgba(255,255,255,.025); }
+    .soundgroup { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 10px; padding: 6px 12px 11px; box-shadow: inset 0 1px 0 rgba(255,255,255,.025); margin: 0 0 12px; }
     .soundline { display: grid; grid-template-columns: 1fr 84px 30px auto; align-items: center; gap: 8px; margin: 9px 0 0; }
     .soundline:first-child { margin-top: 2px; }
     .soundline > label { margin: 0; font-weight: 500; font-size: 12px; color: var(--txt-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .minivol { width: 84px; cursor: ew-resize; }
     .rngval.mini { font-size: 10.5px; color: var(--muted); text-align: right; }
+    /* soundline without a volume slider (e.g. waveform toggle) */
+    .soundline-solo { display: flex; align-items: center; gap: 10px; margin: 9px 0 0; }
+    .soundline-solo > label { margin: 0; font-weight: 500; font-size: 12px; color: var(--txt-2); flex: 1; }
 
     /* ── narration mode ──────────────────────────────── */
-    .narrlist { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0; }
+    .narrlist { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0 0 12px; }
     .narrlist label[title] { cursor: pointer; }
     .narrlist input { position: absolute; opacity: 0; pointer-events: none; }
     .narropt { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 8px; cursor: pointer;
@@ -177,7 +177,7 @@
     .sumchip { opacity: .3; filter: grayscale(1); font-size: 12px; transition: opacity .15s, filter .15s; }
     .sumchip.on { opacity: 1; filter: none; }
 
-    /* ── collapsed debug ─────────────────────────────── */
+    /* ── debug panel (hidden until easter egg) ───────── */
     details.debug { margin-top: 10px; border: 1px solid var(--border-faint); border-radius: 10px; background: var(--surface); }
     details.debug > summary { list-style: none; cursor: pointer; padding: 8px 11px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-2); display: flex; align-items: center; gap: 6px; user-select: none; }
     details.debug > summary::-webkit-details-marker { display: none; }
@@ -200,10 +200,11 @@
     .voicerow { display: grid; grid-template-columns: 108px 1fr 36px; align-items: center; gap: 8px; margin: 7px 0; }
     .voicerow > label { margin: 0; font-weight: 500; font-size: 12px; color: var(--txt-2); }
 
-    .keystatus { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
-    .keystatus .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex: none; }
+    /* key status — used both standalone and inline inside .key-header */
+    .keystatus { display: flex; align-items: center; gap: 6px; }
+    .keystatus .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); flex: none; }
     .keystatus .dot.ok { background: var(--ok-strong); }
-    .keystatus .txt { flex: 1; font-size: 12px; color: var(--muted); }
+    .keystatus .txt { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
     /* affiliate links */
     a.affiliate { display: block; margin: 6px 0 2px; padding: 8px 10px; font-size: 11.5px; text-decoration: none;
@@ -243,8 +244,16 @@
     .modal h3 { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-2); margin: 14px 0 4px; font-weight: 600; }
     .keyinput { display: flex; gap: 6px; }
     .keyinput input { flex: 1; }
+    /* API key header: h3 + status inline */
+    .key-header { display: flex; align-items: center; gap: 10px; margin: 14px 0 4px; }
+    .key-header h3 { margin: 0; flex: 1; }
     .privacy-note { background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 8px 10px; font-size: 11px; color: var(--muted); line-height: 1.5; margin: 4px 0 8px; }
     .privacy-note strong { color: var(--txt-2); }
+    /* seed row: random checkbox + label + number input on one line */
+    .seed-row { display: flex; align-items: center; gap: 8px; margin: 9px 0 0; }
+    .seed-row input[type="checkbox"] { flex: none; accent-color: var(--accent); }
+    .seed-row > label { flex: 1; margin: 0; font-weight: 500; color: var(--txt-2); font-size: 13px; }
+    .seed-row input[type="number"] { width: 110px; min-width: 80px; flex: none; }
     .modal::-webkit-scrollbar { width: 5px; }
     .modal::-webkit-scrollbar-thumb { background: #2d2d31; border-radius: 8px; }
   </style>
@@ -252,7 +261,7 @@
 <body>
   <div class="topbar">
     <div class="header-brand">
-      <h1>Yappable</h1>
+      <h1 id="brandTitle">Yappable</h1>
       <span class="status-line">Lovable turn narration</span>
     </div>
     <div class="header-actions">
@@ -278,8 +287,7 @@
     </div>
   </div>
 
-  <!-- primary: what to read each turn -->
-  <div class="section-h" title="How much of the response to read when Lovable finishes.">Narration mode <span class="hint">— what to read each turn</span></div>
+  <!-- narration mode (no section header) -->
   <fieldset class="narrlist">
     <label title="Only what depends on you now: the pending decision or question. If nothing is pending, says you're clear to continue."><input type="radio" name="mode" value="fast" /><span class="narropt"><span class="em">⚡</span><span class="nm">Fast</span></span></label>
     <label title="Plain-language summary translating technical details into practical impact. (default)"><input type="radio" name="mode" value="beginner" /><span class="narropt"><span class="em">🌱</span><span class="nm">Beginner</span><span class="dflt">default</span></span></label>
@@ -287,8 +295,7 @@
     <label title="Reads the entire agent response, uncut."><input type="radio" name="mode" value="completo" /><span class="narropt"><span class="em">📄</span><span class="nm">Full</span></span></label>
   </fieldset>
 
-  <!-- sounds: cue + error alert, toggle and inline volume (always visible) -->
-  <div class="section-h" title="Short sound before narration and error chime. Toggle and volume inline.">Sounds &amp; alerts</div>
+  <!-- sounds + waveform (no section header) -->
   <div class="soundgroup">
     <div class="soundline" title="Plays a short notification sound before narration.">
       <label for="cueEnabled">🔔 Ping first</label>
@@ -301,6 +308,10 @@
       <input type="range" id="errorVolume" class="minivol" min="0" max="1" step="0.05" title="Error alert volume" />
       <span class="rngval mini" id="errorVolumeOut">0.40</span>
       <div class="switch"><input type="checkbox" id="errorAlertEnabled" /></div>
+    </div>
+    <div class="soundline-solo" title="Show animated waveform bar at top of page while narrating.">
+      <label for="waveformEnabled">📊 Waveform bar</label>
+      <div class="switch"><input type="checkbox" id="waveformEnabled" /></div>
     </div>
   </div>
 
@@ -400,8 +411,8 @@
     </div>
   </details>
 
-  <!-- debug (collapsed) -->
-  <details class="debug">
+  <!-- debug panel (hidden by default; 5 clicks on logo to toggle) -->
+  <details class="debug" id="debugPanel" hidden>
     <summary>Debug — observed output &amp; read text</summary>
     <div class="readdebug">
       <div>
@@ -423,10 +434,13 @@
       <button type="button" class="modal-x" id="settingsClose" title="Close" aria-label="Close">✕</button>
       <h2>Settings</h2>
 
-      <h3>ElevenLabs API key</h3>
-      <div class="keystatus">
-        <span class="dot" id="keyDot"></span>
-        <span class="txt" id="keyTxt">No API key</span>
+      <!-- ElevenLabs API key with inline status -->
+      <div class="key-header">
+        <h3>ElevenLabs API key</h3>
+        <div class="keystatus">
+          <span class="dot" id="keyDot"></span>
+          <span class="txt" id="keyTxt">No API key</span>
+        </div>
       </div>
       <div class="keyinput">
         <input type="password" id="elevenKey" placeholder="xi-api-key..." />
@@ -436,12 +450,6 @@
         Don't have a key yet? <strong>Create an account →</strong>
       </a>
 
-      <h3>Privacy</h3>
-      <div class="privacy-note">
-        🔒 <strong>Local by default.</strong> Native speech and Nano summaries run in the browser.<br>
-        ☁️ <strong>ElevenLabs (optional):</strong> only the final speech text is sent to generate audio when that engine is active.
-      </div>
-
       <h3>Narration</h3>
       <div class="field" title="Wait time between detecting completion and starting speech (lets the DOM settle).">
         <label for="delayMs">Delay (ms)</label>
@@ -449,32 +457,37 @@
         <span class="rngval" id="delayMsOut">100</span>
       </div>
 
-      <h3>ElevenLabs advanced</h3>
-      <div class="field nv" title="Audio format/bitrate. Higher bitrate = better quality and more credits.">
-        <label for="elevenOutputFormat">Format</label>
+      <h3>ElevenLabs audio</h3>
+      <div class="field nv" title="Audio quality. Higher bitrate = better quality and more credits per character.">
+        <label for="elevenOutputFormat">Quality</label>
         <select id="elevenOutputFormat">
-          <option value="mp3_22050_32">MP3 22.05k / 32kbps</option>
-          <option value="mp3_44100_32">MP3 44.1k / 32kbps</option>
-          <option value="mp3_44100_64">MP3 44.1k / 64kbps</option>
-          <option value="mp3_44100_96">MP3 44.1k / 96kbps</option>
-          <option value="mp3_44100_128">MP3 44.1k / 128kbps</option>
-          <option value="mp3_44100_192">MP3 44.1k / 192kbps (Creator+)</option>
+          <option value="mp3_22050_32">22 kHz @ 32 kbps</option>
+          <option value="mp3_44100_32">44 kHz @ 32 kbps</option>
+          <option value="mp3_44100_64">44 kHz @ 64 kbps (default)</option>
+          <option value="mp3_44100_96">44 kHz @ 96 kbps</option>
+          <option value="mp3_44100_128">44 kHz @ 128 kbps</option>
+          <option value="mp3_44100_192">44 kHz @ 192 kbps (Creator+)</option>
         </select>
       </div>
-      <div class="field nv" title="Text normalization (numbers, dates, symbols). auto = decide; on = force; off = faster.">
+      <div class="field nv" title="Text normalization (numbers, dates, symbols). on = always normalize; auto = decide per request; off = faster.">
         <label for="elevenTextNormalization">Normalization</label>
         <select id="elevenTextNormalization">
+          <option value="on">On (default)</option>
           <option value="auto">Auto</option>
-          <option value="on">On</option>
           <option value="off">Off</option>
         </select>
       </div>
-      <div class="inline" title="Fixed seed = deterministic output. Disable 'Random' to fix a seed.">
-        <input type="checkbox" id="elevenSeedRandom" /> <label for="elevenSeedRandom">Random seed</label>
-      </div>
-      <div class="field nv" title="Deterministic seed (0 to 4294967295). Only used when 'Random' is disabled.">
-        <label for="elevenSeed">Seed</label>
+      <div class="seed-row" title="Fixed seed = deterministic output. Uncheck 'Random' to set a specific seed (0–4294967295).">
+        <input type="checkbox" id="elevenSeedRandom" />
+        <label for="elevenSeedRandom">Random seed</label>
         <input type="number" id="elevenSeed" min="0" max="4294967295" step="1" placeholder="—" />
+      </div>
+
+      <!-- Privacy note at the bottom -->
+      <h3>Privacy</h3>
+      <div class="privacy-note">
+        🔒 <strong>Local by default.</strong> Native speech and Nano summaries run in the browser.<br>
+        ☁️ <strong>ElevenLabs (optional):</strong> only the final speech text is sent to generate audio when that engine is active.
       </div>
     </div>
   </div>
