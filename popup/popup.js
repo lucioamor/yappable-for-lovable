@@ -152,8 +152,23 @@ function reflectEnabledState() {
   el.classList.toggle("on", on);
   el.classList.toggle("off", !on);
   $("masterCard").classList.toggle("on", on);
+  document.body.classList.toggle("narr-off", !on);
 }
-$("enabled").addEventListener("change", reflectEnabledState);
+
+function stopAllTabs() {
+  if (!chrome.tabs?.query) return;
+  chrome.tabs.query({ url: "https://lovable.dev/*" }, (tabs) => {
+    for (const tab of tabs || []) {
+      if (!tab?.id) continue;
+      chrome.tabs.sendMessage(tab.id, { type: "LN_STOP_NOW" }, () => void chrome.runtime.lastError);
+    }
+  });
+}
+
+$("enabled").addEventListener("change", () => {
+  reflectEnabledState();
+  if (!$("enabled").checked) stopAllTabs();
+});
 
 // engine
 function reflectEngine() {
@@ -182,6 +197,8 @@ function setEngine(engine) {
 }
 $("segNative").addEventListener("click", () => setEngine("native"));
 $("segEleven").addEventListener("click", () => setEngine("elevenlabs"));
+
+$("repeatBtn").addEventListener("click", () => { triggerNarrateNow(); });
 
 $("engineBadge").addEventListener("click", () => {
   const d = $("cfgVoice");
@@ -270,6 +287,18 @@ $("brandTitle").addEventListener("click", () => {
 // ---------------------------------------------------------------------------
 // Dropdown de idioma
 // ---------------------------------------------------------------------------
+function makeFlagPill(cc) {
+  const span = document.createElement("span");
+  span.className = "flag-pill";
+  const img = document.createElement("img");
+  img.src = `https://flagcdn.com/20x15/${cc}.png`;
+  img.width = 20;
+  img.height = 15;
+  img.alt = cc.toUpperCase();
+  span.appendChild(img);
+  return span;
+}
+
 function buildLangDropdown() {
   const list = $("langList");
   list.replaceChildren();
@@ -277,23 +306,17 @@ function buildLangDropdown() {
     const o = document.createElement("div");
     o.className = "dd-opt";
     o.dataset.code = code;
-    const flag = document.createElement("span");
-    flag.className = "flag-pill";
-    flag.textContent = cc;
     const label = document.createElement("span");
     label.textContent = name;
-    o.append(flag, label);
+    o.append(makeFlagPill(cc), label);
     o.addEventListener("click", () => { set("lang", code); reflectLang(); $("langList").hidden = true; });
     list.appendChild(o);
   }
 }
 function reflectLang() {
   const resolved = resolveLang(cfg.lang);
-  const flag = document.createElement("span");
-  flag.className = "flag-pill";
   const [, cc] = LANGS.find((l) => l[0] === resolved) || LANGS[0];
-  flag.textContent = cc;
-  $("langBtn").replaceChildren(flag);
+  $("langBtn").replaceChildren(makeFlagPill(cc));
   $("langBtn").title = (LANGS.find((l) => l[0] === resolved) || LANGS[0])[2];
   $("langList").querySelectorAll(".dd-opt").forEach((o) => o.classList.toggle("sel", o.dataset.code === resolved));
   populateNativeVoices();
@@ -528,6 +551,7 @@ function load() {
     buildLangDropdown();
     populateNativeVoices();
     reflectUI();
+    if (!cfg.enabled) stopAllTabs();
     const sel = $("elevenVoiceId");
     if (!sel.options.length || sel.options[0].value === "") {
       const option = document.createElement("option");

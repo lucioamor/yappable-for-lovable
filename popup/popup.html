@@ -82,6 +82,8 @@
     .icon-btn:hover { border-color: transparent; background: transparent; color: var(--muted); }
     .icon-btn.gear { width: 34px; min-width: 34px; min-height: 34px; font-size: 18px; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
     .icon-btn.gear:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+    .icon-btn.repeat-btn { width: 34px; min-width: 34px; min-height: 34px; font-size: 16px; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+    .icon-btn.repeat-btn:hover { color: var(--ok-strong); border-color: var(--ok-strong); background: rgba(34,197,94,.1); }
 
     .field { display: grid; grid-template-columns: 108px 1fr 46px; align-items: center; gap: 8px; margin: 7px 0; }
     .field.nv { grid-template-columns: 108px 1fr; }
@@ -91,7 +93,25 @@
     /* ── hero: on/off (whole-session action) ─────────── */
     .control { background: var(--surface); border: 1px solid var(--border-soft); border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; box-shadow: inset 0 1px 0 rgba(255,255,255,.025); }
     .control.hero { padding: 13px 14px; transition: border-color .2s, box-shadow .2s; }
-    .control.hero.on { border-color: var(--accent-line); box-shadow: inset 0 0 0 1px var(--accent-soft), 0 6px 20px -10px rgba(245,158,11,.35); }
+    .control.hero.on { border-color: rgba(34,197,94,.5); box-shadow: inset 0 0 0 1px rgba(34,197,94,.1), 0 6px 20px -10px rgba(34,197,94,.4); }
+
+    /* ── narr-off: grey + lock everything below hero ─── */
+    .narr-section {
+      transition: opacity .2s, filter .2s;
+    }
+    body.narr-off .narr-section {
+      opacity: .32;
+      filter: grayscale(.75) saturate(.3);
+      pointer-events: none;
+      user-select: none;
+    }
+    body.narr-off #engineBadge,
+    body.narr-off .subrow {
+      opacity: .32;
+      filter: grayscale(.75) saturate(.3);
+      pointer-events: none;
+      user-select: none;
+    }
 
     .master { display: flex; align-items: center; gap: 10px; }
     .master label.cap { margin: 0; font-weight: 700; font-size: 14px; flex: 1; color: var(--txt); }
@@ -217,8 +237,9 @@
 
     /* ── language dropdown ───────────────────────────── */
     .dropdown { position: relative; }
-    .flag-pill { width: 28px; min-width: 28px; height: 16px; display: inline-flex; align-items: center; justify-content: center;
-      border-radius: 4px; background: var(--border); color: var(--txt-2); font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+    .flag-pill { width: 28px; min-width: 28px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 3px; overflow: hidden; background: var(--border); }
+    .flag-pill img { display: block; width: 20px; height: 15px; border-radius: 2px; object-fit: cover; }
     .dd-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 5; max-height: 240px; overflow: auto;
       background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.5); padding: 4px; }
     .dd-list[hidden] { display: none; }
@@ -265,7 +286,8 @@
       <span class="status-line">Lovable turn narration</span>
     </div>
     <div class="header-actions">
-      <div class="dropdown" id="langDrop" title="Narration language (native voice and ElevenLabs).">
+      <button class="icon-btn repeat-btn narr-section" id="repeatBtn" title="Repeat last narration.">↩</button>
+      <div class="dropdown narr-section" id="langDrop" title="Narration language (native voice and ElevenLabs).">
         <button type="button" class="lang-pill" id="langBtn" aria-label="Narration language"></button>
         <div class="dd-list" id="langList" hidden></div>
       </div>
@@ -288,7 +310,7 @@
   </div>
 
   <!-- narration mode (no section header) -->
-  <fieldset class="narrlist">
+  <fieldset class="narrlist narr-section">
     <label title="Only what depends on you now: the pending decision or question. If nothing is pending, says you're clear to continue."><input type="radio" name="mode" value="fast" /><span class="narropt"><span class="em">⚡</span><span class="nm">Fast</span></span></label>
     <label title="Plain-language summary translating technical details into practical impact. (default)"><input type="radio" name="mode" value="beginner" /><span class="narropt"><span class="em">🌱</span><span class="nm">Beginner</span><span class="dflt">default</span></span></label>
     <label title="Dense technical summary: verdict, risks, and the pending decision, keeping the terms."><input type="radio" name="mode" value="advanced" /><span class="narropt"><span class="em">🛠️</span><span class="nm">Advanced</span></span></label>
@@ -296,7 +318,7 @@
   </fieldset>
 
   <!-- sounds + waveform (no section header) -->
-  <div class="soundgroup">
+  <div class="soundgroup narr-section">
     <div class="soundline" title="Plays a short notification sound before narration.">
       <label for="cueEnabled">🔔 Ping first</label>
       <input type="range" id="cueVolume" class="minivol" min="0" max="1" step="0.05" title="Cue volume" />
@@ -316,7 +338,7 @@
   </div>
 
   <!-- voice & engine config (set-once, collapsed) -->
-  <details class="cfg" id="cfgVoice">
+  <details class="cfg narr-section" id="cfgVoice">
     <summary title="Who generates the speech and voice parameters. Set once.">
       <span class="cfg-ttl">Voice &amp; engine</span>
       <span class="cfg-state" id="voiceState"></span>

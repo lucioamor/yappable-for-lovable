@@ -1771,6 +1771,12 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "LN_STOP_NOW") {
+      stopSpeaking();
+      try { clearPreview(); } catch (_) {}
+      sendResponse({ ok: true });
+      return false;
+    }
     if (message?.type === "LN_GET_LAST_OUTPUT") {
       // Permite ao popup recuperar o estado da aba ativa mesmo que tenha perdido
       // o evento de chrome.storage.local enquanto estava fechado. Se não houver
