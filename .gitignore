@@ -4,3 +4,7 @@ _metadata/
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Local agent + backups (not for public repo)
+.claude/
+.icons (old, sem transparencia)/
