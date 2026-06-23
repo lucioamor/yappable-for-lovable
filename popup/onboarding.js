@@ -7,6 +7,7 @@
 // ============================================================================
 const $ = (id) => document.getElementById(id);
 const VOICE_CACHE_KEY = "elevenVoicesCache";
+const ELEVENLABS_ORIGIN = "https://api.elevenlabs.io/*";
 
 const keyEl = $("key");
 const activateEl = $("activate");
@@ -17,6 +18,14 @@ function setStatus(state, text) {
   wrap.hidden = !text;
   dot.className = "dot" + (state ? " " + state : "");
   $("statusTxt").textContent = text || "";
+}
+
+function requestElevenLabsAccess() {
+  return new Promise((resolve) => {
+    chrome.permissions.request({ origins: [ELEVENLABS_ORIGIN] }, (granted) => {
+      resolve(!chrome.runtime.lastError && !!granted);
+    });
+  });
 }
 
 keyEl.addEventListener("input", () => {
@@ -49,6 +58,11 @@ $("activate").addEventListener("click", async () => {
   setStatus("", "Verifying key…");
   msg("");
   try {
+    if (!(await requestElevenLabsAccess())) {
+      setStatus("bad", "ElevenLabs access is required to verify the key.");
+      activateEl.disabled = false;
+      return;
+    }
     const res = await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": key } });
     if (res.status === 401) { setStatus("bad", "Invalid API key — check and try again."); activateEl.disabled = false; return; }
     if (!res.ok) throw new Error("HTTP " + res.status);

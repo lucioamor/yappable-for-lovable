@@ -49,16 +49,26 @@
   // modelos que aceitam language_code (Multilingual v2 auto-detecta)
   const LANG_MODELS = /turbo_v2_5|flash_v2_5|eleven_v3/;
   const langCode = (l) => (l || "").split("-")[0];
-  // "auto" -> melhor match com o idioma do navegador; fallback en-US.
+  // "auto" -> idioma da UI do Chrome primeiro; navigator.languages como
+  // fallback. A mesma ordem é usada no popup e no service worker de instalação.
   const SUPPORTED_LANGS = [
     "pt-BR", "pt-PT", "en-US", "en-GB", "es-ES", "es-MX", "fr-FR", "de-DE",
     "it-IT", "nl-NL", "pl-PL", "ru-RU", "tr-TR", "ar-SA", "hi-IN", "ja-JP", "ko-KR", "zh-CN"
   ];
-  function resolveLang(l) {
-    if (l && l !== "auto") return l;
+  function detectedLanguageCandidates() {
+    const candidates = [];
+    try {
+      const ui = chrome.i18n?.getUILanguage?.();
+      if (ui) candidates.push(ui);
+    } catch (_) {}
     const navs = (navigator.languages && navigator.languages.length)
       ? navigator.languages : [navigator.language || ""];
-    for (const nav of navs) {
+    for (const nav of navs) if (nav && !candidates.includes(nav)) candidates.push(nav);
+    return candidates;
+  }
+  function resolveLang(l) {
+    if (l && l !== "auto") return l;
+    for (const nav of detectedLanguageCandidates()) {
       const n = String(nav).toLowerCase().replace(/_/g, "-");
       let hit = SUPPORTED_LANGS.find((c) => c.toLowerCase() === n);
       if (hit) return hit;
@@ -83,6 +93,7 @@
     (MODES.includes(m) ? m : (LEGACY_TO_MODE[m] || DEFAULTS.mode));
 
   let cfg = { ...DEFAULTS };
+  let configLoaded = false;
 
   chrome.storage.sync.get({ ...DEFAULTS, mode: "", announce: "", lens: "" }, (stored) => {
     cfg = { ...DEFAULTS, ...stored };
@@ -92,8 +103,12 @@
     cfg.lang = resolveLang(cfg.lang); // "auto" -> idioma concreto
     cfg.elevenKey = ""; // loaded from local below
     if (stored.elevenKey) chrome.storage.sync.remove("elevenKey");
+    if (!stored.lang || stored.lang === "auto") chrome.storage.sync.set({ lang: cfg.lang });
     if (stored.mode !== cfg.mode) chrome.storage.sync.set({ mode: cfg.mode });
     if (stored.announce || stored.lens) chrome.storage.sync.remove(["announce", "lens"]);
+    configLoaded = true;
+    // O aquecimento só pode capturar um idioma concreto, nunca o sentinel "auto".
+    warmupSummarizer();
   });
   // elevenKey and debug live in storage.local (credentials off sync; debug not roamed).
   chrome.storage.local.get({ elevenKey: "", debug: false }, (local) => {
@@ -114,13 +129,16 @@
       else if (k === "lang") cfg.lang = resolveLang(v.newValue);
       else cfg[k] = v.newValue;
     }
-    // trocou o idioma -> o summarizer foi criado p/ o idioma anterior; descarta e
-    // re-aquece. (O Prompt API é lang-agnóstico: idioma vai no system prompt.)
-    if (changes.lang && _summarizerLang && _summarizerLang !== cfg.lang) {
+    // Idioma selecionado governa geração, tradução e voz. Ao trocar, invalida
+    // qualquer fala/modelo preparado para a seleção anterior.
+    if (changes.lang) {
+      stopSpeaking();
       summarizer = null;
       _summarizerLang = null;
       summarizerDead = false;
       warmupSummarizer();
+      resetLocalization();
+      warmupLocalization();
     }
     // desligou "narrar conclusões" -> para a fala imediatamente
     if (changes.enabled && changes.enabled.newValue === false) {
@@ -143,6 +161,8 @@
   let currentAudio = null; // <audio> ElevenLabs em andamento (p/ poder parar)
   let currentCue = null;   // <audio> do som de cue (p/ garantir 1 áudio por vez)
   let playbackEpoch = 0;   // invalida awaits antigos quando a fala é interrompida
+  let pendingVerboseLocalization = null;
+  let pendingUrgentLocalization = null;
 
   // ---------------------------------------------------------------------------
   // Waveform de telemetria (Web Audio API) — barra animada no topo do chat
@@ -269,6 +289,10 @@
   function stopSpeaking() {
     playbackEpoch++;
     queue.length = 0;
+    // Trabalho ativo termina de forma controlada, mas itens ainda não iniciados
+    // deixam de ser relevantes assim que a fala é preemptada.
+    pendingVerboseLocalization = null;
+    pendingUrgentLocalization = null;
     try { speechSynthesis.cancel(); } catch (_) {}
     if (currentAudio) {
       try { currentAudio.pause(); currentAudio.currentTime = 0; } catch (_) {}
@@ -308,6 +332,7 @@
 
   async function drain() {
     if (speaking || !queue.length) return;
+    if (!cfg.enabled) { queue.length = 0; return; } // desligado: descarta fila
     speaking = true;
     const epoch = playbackEpoch;
     const { text, el, meta } = queue.shift();
@@ -341,13 +366,13 @@
   function pickVoice() {
     const voices = speechSynthesis.getVoices();
     if (!voices.length) return null;
-    if (cfg.nativeVoice) {
-      const exact = voices.find((v) => v.name === cfg.nativeVoice);
-      if (exact) return exact;
-    }
-
     const want = normLang(cfg.lang); // ex.: "pt-br"
     const base = want.split("-")[0]; // ex.: "pt"
+    if (cfg.nativeVoice) {
+      const exact = voices.find((v) => v.name === cfg.nativeVoice);
+      // Uma voz salva para outro idioma não pode sobrepor o dropdown atual.
+      if (exact && normLang(exact.lang).split("-")[0] === base) return exact;
+    }
 
     // 1) REGIÃO EXATA (pt-BR): jamais cai em pt-PT se houver pt-BR.
     const exactRegion = voices.filter((v) => normLang(v.lang) === want);
@@ -805,7 +830,10 @@
   const FAST_START_MAX_DELAY = 100;
   // No fallback genérico (sem padrão reconhecido) não há resumo determinístico
   // bom; aí vale ESPERAR o Nano um pouco mais (a fala atrasa só nesse caso).
-  const NANO_TIMEOUT = 2500;
+  // 2,5s abortava gerações que estavam progredindo e imediatamente iniciava o
+  // fallback seguinte. 6s ainda limita a espera, mas evita encadear dois modelos
+  // quando o primeiro só precisava de mais alguns segundos no device.
+  const AI_REQUEST_TIMEOUT = 6000;
   const NANO_MIN_LEN = 220; // texto curto já é falável; Nano só agrega em texto longo
   // Limite de tamanho é responsabilidade do PROMPT (o modelo gera curto e
   // completo). NUNCA cortamos o texto depois de gerado — cropping mutila a
@@ -817,6 +845,7 @@
   let lastSummarizerStatus = "idle";
   let summarizerWarming = false; // create() em andamento
   let summarizerDead = false; // indisponível nesta sessão (não re-tenta)
+  let summarizerInFlight = null; // timeout não pode abrir várias inferências
 
   // Prompt API (self.LanguageModel) — motor PRIMÁRIO dos modos fast/beginner/
   // advanced. Diferente do Summarizer (tldr), aceita system prompt e segue
@@ -825,7 +854,54 @@
   let promptModelReady = false;
   let promptModelWarming = false;
   let promptModelDead = false;
-  let _promptLangOptsOk = true; // create() aceita outputLanguage? (memo)
+
+  // Idiomas cuja saída é formalmente atestada pelas APIs generativas do Chrome.
+  // Para os demais, pedimos o idioma real no prompt, mas declaramos um pivot
+  // suportado à API e verificamos/traduzimos a resposta somente se necessário.
+  const GENERATIVE_API_LANGS = new Set(["de", "en", "es", "fr", "ja"]);
+  const requestedOutputLang = () => langCode(cfg.lang) || "en";
+  const apiOutputLang = () => {
+    const requested = requestedOutputLang();
+    return GENERATIVE_API_LANGS.has(requested) ? requested : "en";
+  };
+
+  const AI_WARNING_INTERVAL = 60000;
+  const _aiWarningAt = new Map();
+
+  function timeoutError(label) {
+    const err = new Error(`${label} timeout`);
+    err.name = "TimeoutError";
+    return err;
+  }
+
+  // Promise.race sozinho só abandona a espera. Este helper também aborta a
+  // operação que perdeu a corrida e limpa o timer, evitando trabalho órfão.
+  async function withAbortableTimeout(label, start, timeoutMs = AI_REQUEST_TIMEOUT) {
+    const controller = new AbortController();
+    let timer = null;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const err = timeoutError(label);
+        try { controller.abort(err); } catch (_) { controller.abort(); }
+        reject(err);
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([start(controller.signal), deadline]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  function warnAIFallbackOnce(scope, err) {
+    const now = Date.now();
+    const last = _aiWarningAt.get(scope) || 0;
+    if (now - last < AI_WARNING_INTERVAL) return;
+    _aiWarningAt.set(scope, now);
+    const reason = err && (err.name === "TimeoutError" || /timeout/i.test(err.message || ""))
+      ? "timeout" : (err?.name || "error");
+    console.warn(`[Yappable] ${scope} temporarily unavailable; deterministic fallback active (${reason}).`);
+  }
 
   // BCP-47 -> rótulo humano para injetar no system prompt. Fallback: o próprio
   // código (as LLMs entendem "pt-BR"); default English se vazio.
@@ -840,6 +916,23 @@
   };
   const langLabel = (bcp47) =>
     LANG_LABELS[bcp47] || LANG_LABELS[langCode(bcp47)] || bcp47 || "English (United States)";
+
+  // Prefixos falados fora dos modelos também obedecem ao dropdown. Mantê-los
+  // estáticos evita uma chamada de tradução só para duas ou três palavras.
+  const SPOKEN_UI = {
+    project: {
+      en: "Project", pt: "Projeto", es: "Proyecto", fr: "Projet", de: "Projekt",
+      it: "Progetto", nl: "Project", pl: "Projekt", ru: "Проект", tr: "Proje",
+      ar: "مشروع", hi: "प्रोजेक्ट", ja: "プロジェクト", ko: "프로젝트", zh: "项目"
+    },
+    lastMessage: {
+      en: "Last message", pt: "Última mensagem", es: "Último mensaje", fr: "Dernier message",
+      de: "Letzte Nachricht", it: "Ultimo messaggio", nl: "Laatste bericht",
+      pl: "Ostatnia wiadomość", ru: "Последнее сообщение", tr: "Son mesaj",
+      ar: "آخر رسالة", hi: "अंतिम संदेश", ja: "最後のメッセージ", ko: "마지막 메시지", zh: "上一条消息"
+    }
+  };
+  const spokenUI = (key) => SPOKEN_UI[key]?.[langCode(cfg.lang)] || SPOKEN_UI[key]?.en || "";
 
   // System prompt: bloco BASE (regras de áudio) + delta do modo. Escrito em
   // inglês (máxima aderência das LLMs), mas o BASE OBRIGA a saída no idioma da
@@ -877,6 +970,11 @@
       length: "short",
       format: "plain-text",
       preference: "speed", // baixa latência (ignora nuance)
+      // Nunca declara pt (ou outro idioma não homologado), pois o Chrome aborta
+      // a criação antes de o prompt natural chegar ao modelo. A instrução abaixo
+      // ainda tenta obter a saída direta no idioma real do usuário.
+      outputLanguage: apiOutputLang(),
+      expectedContextLanguages: ["en"],
       sharedContext:
         "You summarize a coding agent's reply so it can be spoken aloud to a non-technical user. " +
         `Use at most ${NANO_WORD_BUDGET} words, always in COMPLETE, natural sentences — never stop mid-sentence. ` +
@@ -891,24 +989,26 @@
   // Aquece o modelo em BACKGROUND. Nunca chamado com await no caminho de narração
   // — se Nano está 'downloadable'/'downloading', o download não pode travar a fala.
   async function warmupSummarizer() {
+    if (!configLoaded) return;
     if (summarizer || summarizerWarming || summarizerDead) return;
     if (!("Summarizer" in self)) { summarizerDead = true; return; }
+    const langAtStart = cfg.lang;
     summarizerWarming = true;
     try {
-      const avail = await Summarizer.availability();
+      const options = summarizerOptions();
+      const avail = await Summarizer.availability(options);
       if (avail === "unavailable") { summarizerDead = true; return; }
-      const base = summarizerOptions();
-      const outLang = langCode(cfg.lang) || "en";
-      try {
-        summarizer = await Summarizer.create({
-          ...base,
-          expectedInputLanguages: [...new Set(["en", "pt", outLang])],
-          outputLanguage: outLang
-        });
-      } catch (_) {
-        summarizer = await Summarizer.create(base); // build sem dicas de idioma
+      // Uma única tentativa, sempre com parâmetros formalmente suportados.
+      // Não repete sem outputLanguage: esse retry causava o segundo warning.
+      const created = await Summarizer.create(options);
+      // O usuário pode trocar o dropdown durante download/init. Nunca publica
+      // uma sessão construída com a seleção anterior.
+      if (cfg.lang !== langAtStart) {
+        try { created.destroy?.(); } catch (_) {}
+        return;
       }
-      _summarizerLang = cfg.lang;
+      summarizer = created;
+      _summarizerLang = langAtStart;
     } catch (err) {
       // NÃO marca summarizerDead aqui: create() pode falhar por falta de user
       // activation (download exige gesto). Deixa o unlock() tentar de novo no 1º
@@ -916,6 +1016,7 @@
       console.warn("[Yappable] Summarizer not ready yet (retry on first gesture):", err);
     } finally {
       summarizerWarming = false;
+      if (cfg.lang !== langAtStart) queueMicrotask(warmupSummarizer);
     }
   }
 
@@ -949,31 +1050,20 @@
   async function runMode(mode, text) {
     if (!promptModelReady || !("LanguageModel" in self)) return null;
     const system = systemPromptFor(mode);
-    const outLang = langCode(cfg.lang) || "en";
     let session = null;
     try {
       const baseOpts = { initialPrompts: [{ role: "system", content: system }] };
-      const create = () =>
-        Promise.race([
-          self.LanguageModel.create(
-            _promptLangOptsOk ? { ...baseOpts, outputLanguage: outLang } : baseOpts
-          ),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("prompt create timeout")), NANO_TIMEOUT))
-        ]);
-      try {
-        session = await create();
-      } catch (e) {
-        // outputLanguage pode não ser aceito nesta versão -> memo e retry sem ele.
-        if (_promptLangOptsOk) { _promptLangOptsOk = false; session = await create(); }
-        else throw e;
-      }
-      const out = await Promise.race([
-        session.prompt(text),
-        new Promise((_, rej) => setTimeout(() => rej(new Error("prompt timeout")), NANO_TIMEOUT))
-      ]);
+      session = await withAbortableTimeout(
+        "prompt create",
+        (signal) => self.LanguageModel.create({ ...baseOpts, signal })
+      );
+      const out = await withAbortableTimeout(
+        "prompt",
+        (signal) => session.prompt(text, { signal })
+      );
       return cleanText(out) || null;
     } catch (err) {
-      console.warn("[Yappable] Prompt API failed, fallback:", err);
+      warnAIFallbackOnce("Prompt API", err);
       return null;
     } finally {
       if (session) { try { session.destroy(); } catch (_) {} }
@@ -1022,7 +1112,7 @@
       if (!onProjectPage()) return "";
       if ((await countLovableTabs()) <= 1) return "";
       const name = getProjectName();
-      return name ? `Project ${name}. ` : "";
+      return name ? `${spokenUI("project")} ${name}. ` : "";
     } catch (_) { return ""; }
   }
 
@@ -1034,29 +1124,55 @@
   // pro ElevenLabs (e isso já era verdade no caminho determinístico). Este passo
   // não adiciona nenhuma chamada de rede com o conteúdo do output.
   async function summarizeWithNano(text) {
-    if (!summarizer) return null;
+    if (!summarizer || summarizerInFlight) return null;
+    let timer = null;
     try {
-      const out = await Promise.race([
-        summarizer.summarize(text, {
+      const operation = Promise.resolve(summarizer.summarize(text, {
           context:
             `Summarize in at most ${NANO_WORD_BUDGET} words, in complete, clear, natural sentences for speech. ` +
             "Do not name the tool. If there is a pending question or decision, end with it. " +
             `Always finish the sentence. No markdown, lists, or code. Write the output in ${langLabel(cfg.lang)}.`
-        }),
-        new Promise((_, rej) => setTimeout(() => rej(new Error("nano timeout")), NANO_TIMEOUT))
-      ]);
+        }));
+      summarizerInFlight = operation;
+      operation.then(
+        () => { if (summarizerInFlight === operation) summarizerInFlight = null; },
+        () => { if (summarizerInFlight === operation) summarizerInFlight = null; }
+      );
+      const deadline = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(timeoutError("nano")), AI_REQUEST_TIMEOUT);
+      });
+      const out = await Promise.race([operation, deadline]);
       // SEM cropping pós-geração: o limite vive no prompt. O que o modelo
       // devolver inteiro é o que será falado inteiro.
       return cleanText(out) || null;
     } catch (err) {
-      console.warn("[Yappable] Nano failed, keeping deterministic:", err);
+      warnAIFallbackOnce("Summarizer", err);
       return null;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
   // summarizer foi criado para o idioma atual? (se o usuário trocou o idioma
   // depois do warmup, a sessão antiga ainda emite no idioma velho -> não usa)
   const nanoUsable = () => nanoAvailable() && _summarizerLang === cfg.lang;
+
+  // Última barreira antes da fala: confirma o idioma de QUALQUER output (LLM ou
+  // determinístico) e traduz somente quando necessário. Assim o idioma do prompt
+  // de sistema, da página ou do fallback nunca sobrepõe o dropdown.
+  async function localizeSpokenOutput(text) {
+    const cleaned = cleanText(text);
+    if (!cleaned) return cleaned;
+    if (Date.now() < localizationDisabledUntil) return cleaned;
+    try {
+      const localized = await localizeLine(cleaned);
+      noteLocalizationSuccess();
+      return cleanText(localized) || cleaned;
+    } catch (err) {
+      noteLocalizationFailure(err);
+      return cleaned;
+    }
+  }
 
   function deterministic(result, mode, label) {
     const cleaned = cleanForNarration(renderText(result, mode), mode === "completo" ? "compact" : "natural");
@@ -1075,7 +1191,9 @@
     mode = normalizeMode(mode != null ? mode : cfg.mode);
     const label = await projectLabel();
 
-    if (mode === "completo") return deterministic(result, mode, label);
+    if (mode === "completo") {
+      return await localizeSpokenOutput(deterministic(result, mode, label));
+    }
 
     const source = cleanForNarration(result.body || "", "natural");
     // fast vale mesmo curto (pode ser só "quer que eu implemente?"); os resumos
@@ -1085,14 +1203,20 @@
     if (source && longEnough) {
       if (promptModelAvailable()) {
         const out = await runMode(mode, source);
-        if (out) { lastSummarizerStatus = "prompt"; return label + out; }
+        if (out) {
+          lastSummarizerStatus = "prompt";
+          return await localizeSpokenOutput(label + out);
+        }
       }
       if ((mode === "beginner" || mode === "advanced") && source.length >= NANO_MIN_LEN && nanoUsable()) {
         const nano = await summarizeWithNano(source);
-        if (nano) { lastSummarizerStatus = "nano"; return label + nano; }
+        if (nano) {
+          lastSummarizerStatus = "nano";
+          return await localizeSpokenOutput(label + nano);
+        }
       }
     }
-    return deterministic(result, mode, label);
+    return await localizeSpokenOutput(deterministic(result, mode, label));
   }
 
   function observedText(result) {
@@ -1417,6 +1541,7 @@
   // stopSpeaking — não interrompe a fala em curso (deixa terminar e fala o
   // próximo); a conclusão final é que preempta tudo via commitNarrate.
   function enqueueVerbose(text) {
+    if (!cfg.enabled) return; // respeita desligamento imediato
     const t = cleanForSpeech(text);
     if (!t) return;
     dropTransient();
@@ -1429,12 +1554,90 @@
   // OBJETIVO DA INTERFACE: a fala SEMPRE sai no idioma escolhido no onboarding,
   // independente do idioma da tela. O Lovable mistura idiomas (PT/EN); estes
   // snippets de status NUNCA podem ser falados em outra língua. Tradução fiel —
-  // NÃO resume, não acrescenta, não corta. Motor on-device (Prompt API, já
-  // aquecido); cache por (idioma, texto). Sem modelo disponível -> devolve
-  // verbatim (degradação; nunca trava a fala).
+  // NÃO resume, não acrescenta, não corta. Usa as APIs dedicadas de detecção e
+  // tradução do Chrome; uma fila latest-wins impede inferências concorrentes.
   // ---------------------------------------------------------------------------
   const _i18nCache = new Map(); // (lang\ntexto) -> tradução
   const I18N_CACHE_MAX = 60;
+  const LOCALIZATION_TIMEOUT = 2500;
+  const LOCALIZATION_HARD_STALL = 15000;
+  const LOCALIZATION_FAILURE_LIMIT = 2;
+  const LOCALIZATION_COOLDOWN = 60000;
+  let languageDetectorPromise = null;
+  const translatorPromises = new Map(); // source>target -> Promise<Translator>
+  let localizationActive = false;
+  // Os dois slots pendentes ficam junto da fila de fala, no início do arquivo.
+  let localizationFailures = 0;
+  let localizationDisabledUntil = 0;
+  let localizationWarnedUntil = 0;
+  let localizationGeneration = 0;
+
+  function namedError(name, message) {
+    const err = new Error(message);
+    err.name = name;
+    return err;
+  }
+
+  function resetLocalization() {
+    localizationGeneration++;
+    pendingVerboseLocalization = null;
+    pendingUrgentLocalization = null;
+    localizationFailures = 0;
+    localizationDisabledUntil = 0;
+    localizationWarnedUntil = 0;
+    _i18nCache.clear();
+    translatorPromises.clear();
+  }
+
+  async function getLanguageDetector() {
+    if (!("LanguageDetector" in self)) {
+      throw namedError("NotSupportedError", "Language Detector API unavailable");
+    }
+    if (!languageDetectorPromise) {
+      languageDetectorPromise = (async () => {
+        const avail = await self.LanguageDetector.availability();
+        if (avail === "unavailable") {
+          throw namedError("NotSupportedError", "Language Detector API unavailable");
+        }
+        return self.LanguageDetector.create();
+      })();
+      languageDetectorPromise.catch(() => { languageDetectorPromise = null; });
+    }
+    return languageDetectorPromise;
+  }
+
+  async function getTranslator(sourceLanguage, targetLanguage) {
+    if (!("Translator" in self)) {
+      throw namedError("NotSupportedError", "Translator API unavailable");
+    }
+    const key = `${sourceLanguage}>${targetLanguage}`;
+    if (!translatorPromises.has(key)) {
+      let creation;
+      creation = (async () => {
+        try {
+          const options = { sourceLanguage, targetLanguage };
+          const avail = await self.Translator.availability(options);
+          if (avail === "unavailable") {
+            throw namedError("NotSupportedError", `Translation pair unavailable: ${key}`);
+          }
+          return await self.Translator.create(options);
+        } catch (err) {
+          if (translatorPromises.get(key) === creation) translatorPromises.delete(key);
+          throw err;
+        }
+      })();
+      translatorPromises.set(key, creation);
+    }
+    return translatorPromises.get(key);
+  }
+
+  function cacheLocalization(key, value) {
+    if (_i18nCache.size >= I18N_CACHE_MAX) {
+      _i18nCache.delete(_i18nCache.keys().next().value);
+    }
+    _i18nCache.set(key, value);
+    return value;
+  }
 
   async function localizeLine(text) {
     const t = cleanText(text);
@@ -1442,69 +1645,157 @@
     const lang = cfg.lang;
     const key = lang + "\n" + t;
     if (_i18nCache.has(key)) return _i18nCache.get(key);
-    if (!promptModelReady || !("LanguageModel" in self)) return text; // sem motor
-    const label = langLabel(lang);
-    const system =
-      `You are a translator. Translate the user's text into ${label}. ` +
-      "Output ONLY the translation — no quotes, no notes, no explanation. Preserve the meaning " +
-      "exactly: do NOT summarize, add, or omit anything. Keep it natural to be spoken aloud. " +
-      `If the text is already entirely in ${label}, return it unchanged. ` +
-      "Keep product names, file names, and code identifiers as-is.";
-    const outLang = langCode(lang) || "en";
-    let session = null;
+    const target = langCode(lang) || "en";
+    const detector = await getLanguageDetector();
+    const detected = await detector.detect(t);
+    const best = detected && detected[0];
+    // Frases muito curtas têm baixa confiança. Os status do Lovable são em
+    // inglês por padrão, então esse é o fallback conservador para a origem.
+    const source = best && best.confidence >= 0.55
+      ? langCode(best.detectedLanguage) : "en";
+    if (!source || source === target) return cacheLocalization(key, t);
+    const translator = await getTranslator(source, target);
+    const out = cleanText(await translator.translate(t));
+    if (!out) throw namedError("EmptyTranslationError", "Translator returned empty output");
+    return cacheLocalization(key, out);
+  }
+
+  function localizationFallback(job) {
+    if (!job || job.generation !== localizationGeneration) return;
+    if (job.epoch !== playbackEpoch || !job.fallbackText) return;
+    enqueueVerbose(job.fallbackText);
+  }
+
+  function noteLocalizationFailure(err) {
+    localizationFailures++;
+    if (cfg.debug) {
+      console.debug(`[Yappable] translation attempt failed (${err?.name || "error"}).`);
+    }
+    if (localizationFailures < LOCALIZATION_FAILURE_LIMIT) return;
+    const now = Date.now();
+    localizationDisabledUntil = now + LOCALIZATION_COOLDOWN;
+    if (localizationWarnedUntil >= now) return;
+    localizationWarnedUntil = localizationDisabledUntil;
+    const reason = err && (err.name === "TimeoutError" || /timeout/i.test(err.message || ""))
+      ? "timeout" : (err?.name || "error");
+    console.warn(
+      `[Yappable] Translation paused for ${LOCALIZATION_COOLDOWN / 1000}s after repeated ${reason}; ` +
+      "transient updates will be skipped."
+    );
+  }
+
+  function noteLocalizationSuccess() {
+    localizationFailures = 0;
+    localizationDisabledUntil = 0;
+  }
+
+  function takeLocalizationJob() {
+    if (pendingUrgentLocalization) {
+      const job = pendingUrgentLocalization;
+      pendingUrgentLocalization = null;
+      return job;
+    }
+    const job = pendingVerboseLocalization;
+    pendingVerboseLocalization = null;
+    return job;
+  }
+
+  // Uma operação ativa por vez. O deadline decide a fala, mas a lane só é
+  // liberada quando a API realmente termina; assim um timeout nunca empilha
+  // outra tradução atrás de trabalho ainda vivo no Chrome.
+  async function pumpLocalization() {
+    if (localizationActive) return;
+    const job = takeLocalizationJob();
+    if (!job) return;
+    if (job.generation !== localizationGeneration || job.epoch !== playbackEpoch) {
+      queueMicrotask(pumpLocalization);
+      return;
+    }
+    if (Date.now() < localizationDisabledUntil) {
+      localizationFallback(job);
+      queueMicrotask(pumpLocalization);
+      return;
+    }
+
+    localizationActive = true;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      noteLocalizationFailure(timeoutError("translation"));
+      localizationFallback(job);
+    }, LOCALIZATION_TIMEOUT);
+    // Translator não expõe AbortSignal. Se a promise não encerrar, abre o
+    // circuito mesmo sem uma segunda tentativa; a lane continua ocupada e,
+    // portanto, jamais cria outra operação por cima da travada.
+    const stallTimer = setTimeout(() => {
+      if (timedOut) noteLocalizationFailure(timeoutError("translation stalled"));
+    }, LOCALIZATION_HARD_STALL);
+
     try {
-      const baseOpts = { initialPrompts: [{ role: "system", content: system }] };
-      const create = () =>
-        Promise.race([
-          self.LanguageModel.create(
-            _promptLangOptsOk ? { ...baseOpts, outputLanguage: outLang } : baseOpts
-          ),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("translate create timeout")), NANO_TIMEOUT))
-        ]);
-      try {
-        session = await create();
-      } catch (e) {
-        if (_promptLangOptsOk) { _promptLangOptsOk = false; session = await create(); }
-        else throw e;
+      const out = await localizeLine(job.text);
+      if (!timedOut) {
+        noteLocalizationSuccess();
+        if (job.generation === localizationGeneration && job.epoch === playbackEpoch) {
+          if (job.kind !== "verbose" || job.token === verboseSeq) enqueueVerbose(out);
+        }
       }
-      const out = await Promise.race([
-        session.prompt(t),
-        new Promise((_, rej) => setTimeout(() => rej(new Error("translate timeout")), NANO_TIMEOUT))
-      ]);
-      const res = cleanText(out) || text;
-      if (_i18nCache.size >= I18N_CACHE_MAX) _i18nCache.delete(_i18nCache.keys().next().value);
-      _i18nCache.set(key, res);
-      return res;
     } catch (err) {
-      console.warn("[Yappable] translate failed, verbatim:", err);
-      return text;
+      if (!timedOut) {
+        noteLocalizationFailure(err);
+        localizationFallback(job);
+      }
     } finally {
-      if (session) { try { session.destroy(); } catch (_) {} }
+      clearTimeout(timer);
+      clearTimeout(stallTimer);
+      localizationActive = false;
+      queueMicrotask(pumpLocalization);
     }
   }
 
-  // Enfileira progresso TRADUZIDO. Async: guarda de sequência (descarta a
-  // tradução de um estado obsoleto se outro chegou enquanto traduzia) + guarda de
-  // epoch (não fala progresso depois que a conclusão final preemptou via
-  // stopSpeaking). Mantém o single-slot do enqueueVerbose.
-  let verboseSeq = 0;
-  function enqueueVerboseLocalized(text) {
-    const token = ++verboseSeq;
-    const epoch = playbackEpoch;
-    localizeLine(text).then((out) => {
-      if (token !== verboseSeq || epoch !== playbackEpoch) return;
-      enqueueVerbose(out);
+  function scheduleLocalization(job) {
+    if (Date.now() < localizationDisabledUntil) {
+      localizationFallback(job);
+      return;
+    }
+    if (job.kind === "urgent") pendingUrgentLocalization = job;
+    else pendingVerboseLocalization = job;
+    pumpLocalization();
+  }
+
+  function warmupLocalization() {
+    getLanguageDetector().then(() => {
+      const target = langCode(cfg.lang) || "en";
+      if (target !== "en") return getTranslator("en", target);
+      return null;
+    }).catch((err) => {
+      if (cfg.debug) console.debug(`[Yappable] Translation warmup pending (${err?.name || "error"}).`);
     });
   }
 
-  // Traduz e enfileira uma fala ONE-SHOT (frase fixa do sistema: monitor de
-  // silêncio, alerta de erro). Só guarda de epoch — NÃO usa a guarda de sequência
-  // do progresso (senão um update de progresso no mesmo tick descartaria a fala).
-  function enqueueLocalized(text) {
-    const epoch = playbackEpoch;
-    localizeLine(text).then((out) => {
-      if (epoch !== playbackEpoch) return;
-      enqueueVerbose(out);
+  // Enfileira progresso traduzido. Enquanto uma tradução executa, somente o
+  // status mais recente permanece pendente; status obsoleto nunca vira trabalho.
+  let verboseSeq = 0;
+  function enqueueVerboseLocalized(text) {
+    const token = ++verboseSeq;
+    scheduleLocalization({
+      kind: "verbose",
+      text,
+      fallbackText: "", // melhor omitir progresso transitório que falar no idioma errado
+      token,
+      epoch: playbackEpoch,
+      generation: localizationGeneration
+    });
+  }
+
+  // Alertas/monitor são prioritários. Se a tradução falhar, o texto original
+  // ainda é falado porque omitir um alerta é pior que degradar o idioma.
+  function enqueueLocalized(text, fallbackText = text) {
+    scheduleLocalization({
+      kind: "urgent",
+      text,
+      fallbackText,
+      epoch: playbackEpoch,
+      generation: localizationGeneration
     });
   }
 
@@ -1512,6 +1803,8 @@
   // a cada mudança, sem repetir o rótulo.
   let lastTaskTitle = "";
   let lastTaskDesc = "";
+  let taskTitleTimer = null;    // debounce de 6s antes de narrar novo título
+  let taskLabelSaid = false;    // "Current task:" já foi dito nesta sessão de widget
 
   // Jaccard sobre palavras significativas (>2 chars). Retorna 0..1.
   function descSimilarity(a, b) {
@@ -1525,8 +1818,9 @@
     return inter / (wa.size + wb.size - inter);
   }
 
-  // Narra o widget novo. Título novo -> anuncia a tarefa uma vez (com a 1ª
-  // descrição junta, num único enfileiramento — dropTransient descartaria um 2º).
+  // Narra o widget novo. Título novo -> debounce 6s e anuncia:
+  //   1ª vez: "Current task: <título>. <desc>"
+  //   vezes seguintes: "<título>. <desc>" (sem repetir o rótulo "Current task:")
   // Mesma tarefa, descrição mudou -> lê só a descrição, se for suficientemente
   // diferente da última lida (Jaccard < 0.65). SEM o throttle de 30s: o
   // ritmo já é dado pela fila (um item por vez) + single-slot (só o estado mais
@@ -1535,13 +1829,29 @@
     if (w.title && w.title !== lastTaskTitle) {
       lastTaskTitle = w.title;
       lastTaskDesc = w.desc || "";
-      const lead = `Current task: ${w.title}.`;
-      enqueueVerboseLocalized(w.desc ? `${lead} ${w.desc}` : lead);
+      // Debounce: aguarda 6s — títulos mudam rápido; lê só o estado final.
+      if (taskTitleTimer) clearTimeout(taskTitleTimer);
+      const capturedTitle = w.title;
+      taskTitleTimer = setTimeout(() => {
+        taskTitleTimer = null;
+        // Título mudou de novo durante a espera: deixa o próximo ciclo cuidar.
+        if (capturedTitle !== lastTaskTitle) return;
+        const desc = lastTaskDesc;
+        if (!taskLabelSaid) {
+          taskLabelSaid = true;
+          const lead = `Current task: ${capturedTitle}.`;
+          enqueueVerboseLocalized(desc ? `${lead} ${desc}` : lead);
+        } else {
+          enqueueVerboseLocalized(desc ? `${capturedTitle}. ${desc}` : capturedTitle);
+        }
+      }, 6000);
       return;
     }
     if (w.desc && w.desc !== lastTaskDesc) {
       if (lastTaskDesc && descSimilarity(w.desc, lastTaskDesc) >= 0.65) return;
       lastTaskDesc = w.desc;
+      // Se o timer de título está rodando, atualiza o desc que será narrado junto.
+      if (taskTitleTimer) return;
       enqueueVerboseLocalized(w.desc);
     }
   }
@@ -1554,7 +1864,11 @@
     if (w) { narrateTaskWidget(w); return; }
     // widget sumiu (tarefa concluída/removida): rearma p/ a próxima tarefa, mesmo
     // que reaproveite o mesmo título.
-    if (lastTaskTitle || lastTaskDesc) { lastTaskTitle = ""; lastTaskDesc = ""; }
+    if (lastTaskTitle || lastTaskDesc) {
+      lastTaskTitle = ""; lastTaskDesc = "";
+      taskLabelSaid = false; // próximo widget anuncia "Current task:" de novo
+      if (taskTitleTimer) { clearTimeout(taskTitleTimer); taskTitleTimer = null; }
+    }
     // layout antigo (task dentro da mensagem): mantém o throttle de 30s.
     const snippet = extractProgress();
     if (!snippet || snippet === lastVerbose) return;
@@ -1618,14 +1932,31 @@
 
   function onErrorDetected(toast) {
     const detail = errorDetailText(toast);
-    const phrase = "Attention. Lovable encountered an error and stopped. " +
-      "It won't continue on its own — click Try to fix.";
+    const alerts = {
+      en: "Attention. Lovable encountered an error and stopped. It won't continue on its own — click Try to fix.",
+      pt: "Atenção. O Lovable encontrou um erro e parou. Ele não continuará sozinho — clique em Try to fix.",
+      es: "Atención. Lovable encontró un error y se detuvo. No continuará por sí solo — haz clic en Try to fix.",
+      fr: "Attention. Lovable a rencontré une erreur et s'est arrêté. Il ne continuera pas seul — cliquez sur Try to fix.",
+      de: "Achtung. Lovable ist auf einen Fehler gestoßen und wurde angehalten. Es wird nicht selbstständig fortfahren — klicken Sie auf Try to fix.",
+      it: "Attenzione. Lovable ha rilevato un errore e si è fermato. Non continuerà da solo — fai clic su Try to fix.",
+      nl: "Let op. Lovable heeft een fout aangetroffen en is gestopt. Het gaat niet vanzelf verder — klik op Try to fix.",
+      pl: "Uwaga. Lovable napotkał błąd i zatrzymał się. Nie będzie kontynuować samodzielnie — kliknij Try to fix.",
+      ru: "Внимание. В Lovable произошла ошибка, и работа остановилась. Продолжение невозможно без вашего действия — нажмите Try to fix.",
+      tr: "Dikkat. Lovable bir hatayla karşılaştı ve durdu. Kendi kendine devam etmeyecek — Try to fix düğmesine tıklayın.",
+      ar: "تنبيه. واجه Lovable خطأ وتوقف. لن يتابع من تلقاء نفسه — انقر على Try to fix.",
+      hi: "ध्यान दें। Lovable में त्रुटि आई और वह रुक गया। यह अपने आप आगे नहीं बढ़ेगा — Try to fix पर क्लिक करें।",
+      ja: "注意。Lovable でエラーが発生し、停止しました。自動では続行しません — Try to fix をクリックしてください。",
+      ko: "주의. Lovable에 오류가 발생하여 중지되었습니다. 자동으로 계속되지 않습니다 — Try to fix를 클릭하세요.",
+      zh: "注意。Lovable 遇到错误并已停止。它不会自行继续 — 请点击 Try to fix。"
+    };
+    const phrase = alerts[langCode(cfg.lang)] || alerts.en;
     playErrorChime();
     stopSpeaking(); // erro tem prioridade sobre narração em curso
     // narra pela FILA ÚNICA (respeita o motor escolhido; fallback nativo é do
     // drain). Delay curto só pra não falar por cima do bipe.
     setTimeout(() => {
-      enqueueLocalized(phrase);
+      if (!cfg.enabled) return; // usuário desligou durante o delay
+      enqueueVerbose(phrase); // frase fixa já localizada; não depende de modelo
     }, 450);
     try { chrome.storage.local.set({ lovableNarratorLastError: { at: Date.now(), detail } }); } catch (_) {}
   }
@@ -1702,7 +2033,7 @@
     const last = pickLastCompleted();
     if (!last) return;
     spoken.delete(last.id); // baseline marked it; force-read the last on reload
-    commitNarrate(last, "Last message: "); // prefix only on reload
+    commitNarrate(last, `${spokenUI("lastMessage")}: `); // prefix only on reload
   }
 
   markBaseline();
@@ -1748,6 +2079,7 @@
     // se a 1ª tentativa (no load, sem activation) não conseguiu criar.
     warmupSummarizer();
     warmupPromptModel();
+    warmupLocalization();
     document.removeEventListener("click", unlock, true);
     document.removeEventListener("keydown", unlock, true);
   }
