@@ -55,13 +55,22 @@ const LANGS = [
   ["zh-CN", "cn", "中文"]
 ];
 
-// "auto" -> melhor match com o idioma do navegador; fallback en-US.
+// "auto" -> idioma da UI do Chrome primeiro; navigator.languages como fallback.
 const SUPPORTED_LANGS = LANGS.map((l) => l[0]);
-function resolveLang(l) {
-  if (l && l !== "auto") return l;
+function detectedLanguageCandidates() {
+  const candidates = [];
+  try {
+    const ui = chrome.i18n?.getUILanguage?.();
+    if (ui) candidates.push(ui);
+  } catch (_) {}
   const navs = (navigator.languages && navigator.languages.length)
     ? navigator.languages : [navigator.language || ""];
-  for (const nav of navs) {
+  for (const nav of navs) if (nav && !candidates.includes(nav)) candidates.push(nav);
+  return candidates;
+}
+function resolveLang(l) {
+  if (l && l !== "auto") return l;
+  for (const nav of detectedLanguageCandidates()) {
     const n = String(nav).toLowerCase().replace(/_/g, "-");
     let hit = SUPPORTED_LANGS.find((c) => c.toLowerCase() === n);
     if (hit) return hit;
@@ -82,7 +91,24 @@ const GROUPS = {
   ]
 };
 
-const SAMPLE = "Yappable is active. This is the selected voice.";
+const SAMPLES = {
+  en: "Yappable is active. This is the selected voice.",
+  pt: "O Yappable está ativo. Esta é a voz selecionada.",
+  es: "Yappable está activo. Esta es la voz seleccionada.",
+  fr: "Yappable est actif. Voici la voix sélectionnée.",
+  de: "Yappable ist aktiv. Dies ist die ausgewählte Stimme.",
+  it: "Yappable è attivo. Questa è la voce selezionata.",
+  nl: "Yappable is actief. Dit is de geselecteerde stem.",
+  pl: "Yappable jest aktywny. To jest wybrany głos.",
+  ru: "Yappable активен. Это выбранный голос.",
+  tr: "Yappable etkin. Bu, seçilen sestir.",
+  ar: "Yappable نشط. هذا هو الصوت المحدد.",
+  hi: "Yappable सक्रिय है। यह चुनी गई आवाज़ है।",
+  ja: "Yappable は有効です。これが選択された音声です。",
+  ko: "Yappable이 활성화되었습니다. 선택한 음성입니다.",
+  zh: "Yappable 已启用。这是所选语音。"
+};
+const sampleForLanguage = () => SAMPLES[langCode(resolveLang(cfg.lang))] || SAMPLES.en;
 const VOICE_CACHE_KEY = "elevenVoicesCache"; // chrome.storage.local: { key, at, voices:[{id,name,lang}] }
 const LAST_OUTPUT_KEY = "lovableNarratorLastOutput";
 const ELEVENLABS_ORIGIN = "https://api.elevenlabs.io/*";
@@ -328,12 +354,13 @@ function makeFlagPill(cc) {
 function buildLangDropdown() {
   const list = $("langList");
   list.replaceChildren();
+  const detected = resolveLang("auto");
   for (const [code, cc, name] of LANGS) {
     const o = document.createElement("div");
     o.className = "dd-opt";
     o.dataset.code = code;
     const label = document.createElement("span");
-    label.textContent = name;
+    label.textContent = code === detected ? `${name} (Detected)` : name;
     o.append(makeFlagPill(cc), label);
     o.addEventListener("click", () => { set("lang", code); reflectLang(); $("langList").hidden = true; });
     list.appendChild(o);
@@ -341,9 +368,13 @@ function buildLangDropdown() {
 }
 function reflectLang() {
   const resolved = resolveLang(cfg.lang);
-  const [, cc] = LANGS.find((l) => l[0] === resolved) || LANGS[0];
-  $("langBtn").replaceChildren(makeFlagPill(cc));
-  $("langBtn").title = (LANGS.find((l) => l[0] === resolved) || LANGS[0])[2];
+  const [, cc, name] = LANGS.find((l) => l[0] === resolved) || LANGS[0];
+  $("langBtn").replaceChildren(
+    makeFlagPill(cc),
+    document.createTextNode(langCode(resolved).toUpperCase())
+  );
+  $("langBtn").removeAttribute("title");
+  $("langBtn").setAttribute("aria-label", `Narration language: ${name}`);
   $("langList").querySelectorAll(".dd-opt").forEach((o) => o.classList.toggle("sel", o.dataset.code === resolved));
   populateNativeVoices();
   reflectSummaries();
@@ -499,7 +530,7 @@ function resetGroup(group) {
 function testNative() {
   stopAll();
   if (!("speechSynthesis" in window)) { msg("speechSynthesis not supported."); return; }
-  const u = new SpeechSynthesisUtterance(SAMPLE);
+  const u = new SpeechSynthesisUtterance(sampleForLanguage());
   u.lang = resolveLang(cfg.lang);
   u.rate = cfg.rate;
   u.pitch = cfg.pitch;
