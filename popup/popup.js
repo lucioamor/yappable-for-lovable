@@ -85,6 +85,7 @@ const GROUPS = {
 const SAMPLE = "Yappable is active. This is the selected voice.";
 const VOICE_CACHE_KEY = "elevenVoicesCache"; // chrome.storage.local: { key, at, voices:[{id,name,lang}] }
 const LAST_OUTPUT_KEY = "lovableNarratorLastOutput";
+const ELEVENLABS_ORIGIN = "https://api.elevenlabs.io/*";
 const MAX_DELAY_MS = 3000;
 const MODES = ["fast", "beginner", "advanced", "completo"];
 const LEGACY_TO_MODE = {
@@ -98,6 +99,28 @@ const normalizeMode = (m) =>
 const $ = (id) => document.getElementById(id);
 const msg = (t) => { $("msg").textContent = t || ""; };
 const fmt = (v, digits) => digits === 0 ? String(Math.round(v)) : Number(v).toFixed(digits);
+
+function hasElevenLabsAccess() {
+  return new Promise((resolve) => {
+    chrome.permissions.contains({ origins: [ELEVENLABS_ORIGIN] }, (granted) => {
+      resolve(!chrome.runtime.lastError && !!granted);
+    });
+  });
+}
+
+function requestElevenLabsAccess() {
+  return new Promise((resolve) => {
+    chrome.permissions.request({ origins: [ELEVENLABS_ORIGIN] }, (granted) => {
+      if (chrome.runtime.lastError) {
+        msg("Could not request ElevenLabs access.");
+        resolve(false);
+        return;
+      }
+      if (!granted) msg("ElevenLabs access was not granted.");
+      resolve(!!granted);
+    });
+  });
+}
 
 let cfg = { ...DEFAULTS };
 let lastOutput = null;
@@ -196,7 +219,10 @@ function setEngine(engine) {
   reflectEngine();
 }
 $("segNative").addEventListener("click", () => setEngine("native"));
-$("segEleven").addEventListener("click", () => setEngine("elevenlabs"));
+$("segEleven").addEventListener("click", async () => {
+  if (!(await requestElevenLabsAccess())) return;
+  setEngine("elevenlabs");
+});
 
 $("repeatBtn").addEventListener("click", () => { triggerNarrateNow(); });
 
@@ -345,9 +371,13 @@ $("keyReveal").addEventListener("click", () => {
   const el = $("elevenKey");
   el.type = el.type === "password" ? "text" : "password";
 });
-$("elevenKey").addEventListener("change", () => {
+$("elevenKey").addEventListener("change", async () => {
   const k = $("elevenKey").value.trim();
   const changed = k !== cfg.elevenKey;
+  if (k && !(await requestElevenLabsAccess())) {
+    $("elevenKey").value = cfg.elevenKey;
+    return;
+  }
   set("elevenKey", k);
   reflectKeyStatus();
   if (k && changed) loadElevenVoices(true);
@@ -420,13 +450,17 @@ async function fetchElevenVoices() {
   }));
 }
 
-function loadElevenVoices(force) {
+async function loadElevenVoices(force) {
   if (!cfg.elevenKey) {
     const sel = $("elevenVoiceId");
     const option = document.createElement("option");
     option.value = "";
     option.textContent = "— configure the API key (⚙) —";
     sel.replaceChildren(option);
+    return;
+  }
+  if (!(await hasElevenLabsAccess())) {
+    msg("Enable ElevenLabs to grant API access.");
     return;
   }
   chrome.storage.local.get(VOICE_CACHE_KEY, async (st) => {
@@ -656,7 +690,10 @@ bindRange("elevenStyle", "styleOut", 2);
 bindRange("elevenSpeed", "elevenSpeedOut", 2);
 
 $("elevenSeedRandom").addEventListener("change", reflectSeed);
-$("refreshVoices").addEventListener("click", () => loadElevenVoices(true));
+$("refreshVoices").addEventListener("click", async () => {
+  if (!(await requestElevenLabsAccess())) return;
+  loadElevenVoices(true);
+});
 $("resetNative").addEventListener("click", () => resetGroup("native"));
 $("resetEleven").addEventListener("click", () => resetGroup("eleven"));
 $("testNative").addEventListener("click", testNative);
