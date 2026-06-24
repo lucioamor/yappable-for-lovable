@@ -118,10 +118,29 @@
     return clean(body.split(/[.\n]/).find(Boolean) || fallback);
   }
 
-  // RESUMO: lead curto (seções ou intro) + o "Esperado:". Avisos canned de risco
-  // foram removidos da fala (o sistema interpreta o contexto via LLM no
-  // content.js; o determinístico só lê o que está na mensagem, sem prescrever).
-  // O Nano (content.js) só entra quando nem isso tem estrutura.
+  const SEVERITY_WEIGHT = { high: 3, medium: 2, low: 1 };
+
+  function riskNotes(ir, opts) {
+    const mode = normalizeMode(opts && (opts.mode || opts.detail));
+    if (mode === "fast") return [];
+    const slots = ((ir && ir.slots && ir.slots.risk) || [])
+      .filter((slot) => clean(slot && slot.text))
+      .slice()
+      .sort((a, b) => (SEVERITY_WEIGHT[b.severity] || 0) - (SEVERITY_WEIGHT[a.severity] || 0));
+    const selected = mode === "completo" ? slots : slots.slice(0, 1);
+    return selected.map((slot) => clean(slot.text));
+  }
+
+  function appendRiskNotes(text, ir, opts) {
+    const base = clean(text);
+    const normalizedBase = base.toLowerCase();
+    const missing = riskNotes(ir, opts)
+      .filter((note) => !normalizedBase.includes(note.toLowerCase()));
+    return join([base, ...missing]);
+  }
+
+  // RESUMO: lead curto (seções ou intro) + o "Esperado:". A principal ressalva
+  // de risco é anexada por render(), depois que o texto-base estiver pronto.
   function renderResumo(ir) {
     const headings = sectionHeadings(ir);
     const intro = introOf(ir);
@@ -181,11 +200,11 @@
     // Set closure lang BEFORE any sub-renderer runs.
     _renderLang = (opts && opts.lang) || "en-US";
     const mode = normalizeMode(opts && (opts.mode || opts.detail));
-    if (mode === "completo") return renderCompleto(ir);
+    if (mode === "completo") return appendRiskNotes(renderCompleto(ir), ir, { mode });
     if (mode === "fast") return renderFast(ir);
     // beginner/advanced compartilham o fallback determinístico (a diferença real
     // vive no system prompt do Prompt API; sem LLM, ambos dão o briefing curto).
-    return renderResumo(ir);
+    return appendRiskNotes(renderResumo(ir), ir, { mode });
   }
 
   function renderWithMeta(ir, opts) {
@@ -194,7 +213,7 @@
     return { text, riskFlags: riskSlots };
   }
 
-  const api = { render, renderWithMeta, normalizeMode };
+  const api = { render, renderWithMeta, normalizeMode, riskNotes, appendRiskNotes };
   root.LovableRenderer = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof self !== "undefined" ? self : globalThis);

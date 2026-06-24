@@ -6,6 +6,25 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- Risk flags are now spoken according to narration mode: none in Fast, the
+  highest-severity flag in Beginner/Advanced, and all flags in Full.
+- Live progress translation waits briefly for the task description to settle
+  and serializes model sessions so only the latest state is processed.
+- Background-task widget extraction is shared by narration and silence
+  monitoring.
+
+### Fixed
+
+- Cue volume now defaults consistently to `0.8` in the popup, content script,
+  and install seed.
+- Removed the unused legacy speech-shaping module.
+
+---
+
 ## [0.3.0] — 2026-06-23
 
 ### Added

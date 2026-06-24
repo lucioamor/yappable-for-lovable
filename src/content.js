@@ -148,6 +148,7 @@
   let currentAudio = null; // <audio> ElevenLabs em andamento (p/ poder parar)
   let currentCue = null;   // <audio> do som de cue (p/ garantir 1 áudio por vez)
   let playbackEpoch = 0;   // invalida awaits antigos quando a fala é interrompida
+  let verboseLocalization = null;
 
   // ---------------------------------------------------------------------------
   // Waveform de telemetria (Web Audio API) — barra animada no topo do chat
@@ -269,6 +270,7 @@
   // para tudo: limpa fila, cancela TTS nativo e o áudio ElevenLabs atual
   function stopSpeaking() {
     playbackEpoch++;
+    if (verboseLocalization) verboseLocalization.cancel();
     queue.length = 0;
     try { speechSynthesis.cancel(); } catch (_) {}
     if (currentAudio) {
@@ -1087,6 +1089,12 @@
   async function buildSpeech(result, mode) {
     mode = normalizeMode(mode != null ? mode : cfg.mode);
     const label = await projectLabel();
+    const withRisks = (text) => {
+      const ir = getOrBuildIR(result);
+      return self.LovableRenderer && self.LovableRenderer.appendRiskNotes
+        ? self.LovableRenderer.appendRiskNotes(text, ir, { mode, lang: cfg.lang })
+        : text;
+    };
 
     if (mode === "completo") return deterministic(result, mode, label);
 
@@ -1098,11 +1106,11 @@
     if (source && longEnough) {
       if (promptModelAvailable()) {
         const out = await runMode(mode, source);
-        if (out) { lastSummarizerStatus = "prompt"; return label + out; }
+        if (out) { lastSummarizerStatus = "prompt"; return withRisks(label + out); }
       }
       if ((mode === "beginner" || mode === "advanced") && source.length >= NANO_MIN_LEN && nanoUsable()) {
         const nano = await summarizeWithNano(source);
-        if (nano) { lastSummarizerStatus = "nano"; return label + nano; }
+        if (nano) { lastSummarizerStatus = "nano"; return withRisks(label + nano); }
       }
     }
     return deterministic(result, mode, label);
@@ -1365,23 +1373,10 @@
   // widget. O título é o RÓTULO da tarefa (lido uma vez); a descrição muda a cada
   // passo e é lida a cada mudança — quem cuida disso é narrateTaskWidget.
   function extractTaskWidget() {
-    const status = [...document.querySelectorAll('[role="status"][aria-live]')]
-      .find((s) => /background task/i.test(s.textContent || ""));
-    if (!status) return null;
-    const scope = status.parentElement || status;
-    const btn = [...scope.querySelectorAll("li button")].pop();
-    if (!btn) return null;
-    const muted = btn.querySelector("span.text-muted-foreground");
-    let desc = muted ? cleanText(muted.textContent).replace(/^[\s:]+/, "") : "";
+    const widget = self.LovableTaskWidget.read(document);
+    if (!widget) return null;
+    let { title, desc } = widget;
     if (desc && RE_PROGRESS_NOISE.test(desc)) desc = "";
-    // título = wrapper do texto, descontando o trecho muted da descrição
-    const wrap = muted ? muted.parentElement : btn.querySelector("span.truncate");
-    let title = "";
-    if (wrap) {
-      const clone = wrap.cloneNode(true);
-      clone.querySelectorAll("span.text-muted-foreground").forEach((n) => n.remove());
-      title = cleanText(clone.textContent);
-    }
     if (title && RE_PROGRESS_NOISE.test(title)) title = "";
     return (title || desc) ? { title, desc } : null;
   }
@@ -1496,18 +1491,20 @@
     }
   }
 
-  // Enfileira progresso TRADUZIDO. Async: guarda de sequência (descarta a
-  // tradução de um estado obsoleto se outro chegou enquanto traduzia) + guarda de
-  // epoch (não fala progresso depois que a conclusão final preemptou via
-  // stopSpeaking). Mantém o single-slot do enqueueVerbose.
-  let verboseSeq = 0;
+  // Enfileira somente o último progresso após uma curta estabilização do DOM.
+  // createLatestTask também serializa o trabalho: nunca há duas sessões de
+  // tradução concorrentes e resultados obsoletos não chegam à fila de áudio.
+  const VERBOSE_LOCALIZE_DEBOUNCE_MS = 300;
+  verboseLocalization = self.LovableLatestTask.createLatestTask({
+    delayMs: VERBOSE_LOCALIZE_DEBOUNCE_MS,
+    work: (text) => localizeLine(text),
+    commit: (out) => enqueueVerbose(out),
+    isValid: (context) => context.epoch === playbackEpoch,
+    onError: (error) => console.warn("[Yappable] verbose localization failed:", error)
+  });
+
   function enqueueVerboseLocalized(text) {
-    const token = ++verboseSeq;
-    const epoch = playbackEpoch;
-    localizeLine(text).then((out) => {
-      if (token !== verboseSeq || epoch !== playbackEpoch) return;
-      enqueueVerbose(out);
-    });
+    verboseLocalization.schedule(text, { epoch: playbackEpoch });
   }
 
   // Traduz e enfileira uma fala ONE-SHOT (frase fixa do sistema: monitor de

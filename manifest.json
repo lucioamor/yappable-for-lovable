@@ -30,7 +30,7 @@
     },
     {
       "matches": ["https://lovable.dev/*"],
-      "js": ["src/risk-detector.js", "src/ir-builder.js", "src/renderer.js", "src/silence-monitor.js", "src/content.js"],
+      "js": ["src/risk-detector.js", "src/ir-builder.js", "src/renderer.js", "src/task-widget.js", "src/latest-task.js", "src/silence-monitor.js", "src/content.js"],
       "run_at": "document_idle"
     }
   ],
