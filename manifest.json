@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
+  "minimum_chrome_version": "116",
   "name": "Yappable for Lovable - Every build, debriefed",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Natural voice companion for Lovable that briefs you audibly on every prompt — what changed, why it matters, and what to do next.",
-  "permissions": ["storage", "declarativeNetRequest"],
+  "permissions": ["storage", "offscreen", "declarativeNetRequest"],
   "host_permissions": [
     "https://lovable.dev/*",
     "https://api.elevenlabs.io/*"

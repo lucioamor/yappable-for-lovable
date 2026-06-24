@@ -35,7 +35,7 @@
     elevenKey: "",
     elevenVoiceId: "cgSgspJ2msm6clMCkdW9", // Jessica (default voice, expressiva/playful)
     elevenModel: "eleven_flash_v2_5",
-    elevenOutputFormat: "mp3_44100_64", // query param output_format
+    elevenOutputFormat: "mp3_44100_128", // query param output_format
     elevenStability: 0.2, // 0–1
     elevenSimilarity: 0.2, // similarity_boost 0–1
     elevenStyle: 0.5, // style exaggeration 0–1 (v2+)
@@ -43,7 +43,12 @@
     elevenSpeakerBoost: true, // use_speaker_boost
     elevenTextNormalization: "on", // auto | on | off
     elevenSeedRandom: true, // true = sem seed fixo
-    elevenSeed: null // seed determinístico 0–4294967295
+    elevenSeed: null, // seed determinístico 0–4294967295
+    streamingEnabled: true,
+    audioCacheEnabled: true,
+    historyEnabled: true,
+    saveFullText: false,
+    maxCacheSizeMb: 100
   };
 
   // modelos que aceitam language_code (Multilingual v2 auto-detecta)
@@ -255,15 +260,11 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Cache de áudio ElevenLabs (ArrayBuffer por hash do texto + parâmetros de voz)
-  // Evita re-chamada para briefings repetidos (ex.: reload da página).
+  // Playback remoto via documento offscreen. O documento também mantém o cache
+  // persistente em IndexedDB e continua tocando se o popup for fechado.
   // ---------------------------------------------------------------------------
-  const _audioCache = new Map(); // key -> ArrayBuffer
-  const AUDIO_CACHE_MAX = 15;
-
-  function _audioCacheKey(text, vSettings) {
-    return JSON.stringify({ t: text, ...vSettings });
-  }
+  let currentRemoteRequestId = null;
+  const remotePlayback = new Map();
 
   // para tudo: limpa fila, cancela TTS nativo e o áudio ElevenLabs atual
   function stopSpeaking() {
@@ -273,6 +274,14 @@
     if (currentAudio) {
       try { currentAudio.pause(); currentAudio.currentTime = 0; } catch (_) {}
       currentAudio = null;
+    }
+    if (currentRemoteRequestId) {
+      chrome.runtime.sendMessage({
+        __yappable: true,
+        type: "audio.stop",
+        requestId: currentRemoteRequestId
+      }, () => void chrome.runtime.lastError);
+      currentRemoteRequestId = null;
     }
     if (currentCue) {
       try { currentCue.pause(); currentCue.currentTime = 0; } catch (_) {}
@@ -404,8 +413,6 @@
 
   // --- TTS ElevenLabs ---
   async function speakEleven(text, epoch) {
-    const fmtParam = cfg.elevenOutputFormat || "mp3_44100_64";
-    const sendText = text;
     const voiceSettings = {
       stability: cfg.elevenStability,
       similarity_boost: cfg.elevenSimilarity,
@@ -413,68 +420,74 @@
       speed: cfg.elevenSpeed,
       use_speaker_boost: cfg.elevenSpeakerBoost
     };
-    const body = {
-      text: sendText,
-      model_id: cfg.elevenModel,
-      voice_settings: voiceSettings,
-      apply_text_normalization: cfg.elevenTextNormalization || "auto"
-    };
-    if (LANG_MODELS.test(cfg.elevenModel)) body.language_code = langCode(cfg.lang);
-    if (!cfg.elevenSeedRandom && cfg.elevenSeed != null) body.seed = cfg.elevenSeed;
-
-    // Cache: evita re-chamada para texto + parâmetros idênticos (ex.: reload).
-    const cacheKey = _audioCacheKey(sendText, {
-      v: cfg.elevenVoiceId, m: cfg.elevenModel, f: fmtParam,
-      st: voiceSettings.stability, si: voiceSettings.similarity_boost,
-      sy: voiceSettings.style, sp: voiceSettings.speed, b: voiceSettings.use_speaker_boost,
-      ln: LANG_MODELS.test(cfg.elevenModel) ? langCode(cfg.lang) : "",
-      tn: body.apply_text_normalization,
-      sr: !!cfg.elevenSeedRandom,
-      seed: cfg.elevenSeedRandom ? null : body.seed
+    const languageCode = LANG_MODELS.test(cfg.elevenModel) ? langCode(cfg.lang) : "";
+    const seed = !cfg.elevenSeedRandom && cfg.elevenSeed != null ? cfg.elevenSeed : null;
+    const requestId = (crypto.randomUUID && crypto.randomUUID()) || `${Date.now()}-${Math.random()}`;
+    currentRemoteRequestId = requestId;
+    const completion = new Promise((resolve, reject) => {
+      remotePlayback.set(requestId, { resolve, reject, epoch });
     });
-    let audioBuffer = _audioCache.get(cacheKey);
-    if (!audioBuffer) {
-      const res = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${cfg.elevenVoiceId}?output_format=${fmtParam}`,
-        {
-          method: "POST",
-          headers: {
-            "xi-api-key": cfg.elevenKey,
-            "Content-Type": "application/json",
-            Accept: "audio/mpeg"
-          },
-          body: JSON.stringify(body)
+    let response;
+    try {
+      response = await chrome.runtime.sendMessage({
+        __yappable: true,
+        type: "audio.play",
+        request: {
+        requestId,
+        text,
+        voiceId: cfg.elevenVoiceId,
+        modelId: cfg.elevenModel,
+        outputFormat: cfg.elevenOutputFormat,
+        voiceSettings,
+        languageCode,
+        applyTextNormalization: cfg.elevenTextNormalization || "on",
+        seed,
+        streamingEnabled: cfg.streamingEnabled !== false,
+        cacheEnabled: cfg.audioCacheEnabled !== false,
+        historyEnabled: cfg.historyEnabled !== false,
+        saveFullText: cfg.saveFullText === true,
+        maxCacheSizeMb: Number(cfg.maxCacheSizeMb) || 100,
+        volume: cfg.volume,
+        sourceUrl: location.href,
+        sourceTitle: document.title,
+        projectLabel: (location.pathname.match(/\/projects\/([^/]+)/) || [])[1] || ""
         }
-      );
-      if (!res.ok) throw new Error(`ElevenLabs ${res.status}`);
-      audioBuffer = await res.arrayBuffer();
-      if (_audioCache.size >= AUDIO_CACHE_MAX) {
-        _audioCache.delete(_audioCache.keys().next().value);
-      }
-      _audioCache.set(cacheKey, audioBuffer);
+      });
+    } catch (error) {
+      remotePlayback.delete(requestId);
+      currentRemoteRequestId = null;
+      throw error;
     }
-    if (epoch != null && !playbackCurrent(epoch)) return;
-
-    const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
-    const url = URL.createObjectURL(blob);
-    let audio = null;
-    await new Promise((resolve, reject) => {
-      if (epoch != null && !playbackCurrent(epoch)) return resolve();
-      audio = new Audio(url);
-      currentAudio = audio; // ref global p/ stopSpeaking()
-      audio.volume = cfg.volume;
-      _wfStartEleven(audio);
-      audio.onended = () => { _wfHide(); resolve(); };
-      audio.onpause = () => {
-        if (epoch != null && !playbackCurrent(epoch)) {
-          _wfHide();
-          resolve();
-        }
-      };
-      audio.onerror = () => { _wfHide(); reject(new Error("audio play error")); };
-      audio.play().catch((err) => { _wfHide(); reject(err); });
-    }).finally(() => { URL.revokeObjectURL(url); if (currentAudio === audio) currentAudio = null; });
+    if (!response?.ok) {
+      remotePlayback.delete(requestId);
+      currentRemoteRequestId = null;
+      throw new Error(response?.error || "Unable to start ElevenLabs audio.");
+    }
+    try {
+      await completion;
+    } finally {
+      remotePlayback.delete(requestId);
+      if (currentRemoteRequestId === requestId) currentRemoteRequestId = null;
+      _wfHide();
+    }
   }
+
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message?.source !== "offscreen" || message?.type !== "audio.event") return;
+    const pending = remotePlayback.get(message.requestId);
+    if (!pending) return;
+    if (message.state === "playing" || message.state === "streaming" || message.state === "cache_hit") {
+      if (!_wfAnimId) _wfStartNative();
+      return;
+    }
+    if (message.state === "completed" || message.state === "cancelled") {
+      pending.resolve(message);
+      return;
+    }
+    if (message.state === "failed" || message.state === "partial" || message.state === "fallback_available") {
+      pending.reject(new Error(message.error || "ElevenLabs streaming failed."));
+    }
+  });
 
   // ---------------------------------------------------------------------------
   // Extração: detectar mensagem do agente concluída

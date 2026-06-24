@@ -18,7 +18,7 @@ const DEFAULTS = {
   elevenKey: "",
   elevenVoiceId: "cgSgspJ2msm6clMCkdW9", // Jessica (default voice, expressiva/playful)
   elevenModel: "eleven_flash_v2_5",
-  elevenOutputFormat: "mp3_44100_64",
+  elevenOutputFormat: "mp3_44100_128",
   elevenStability: 0.2,
   elevenSimilarity: 0.2,
   elevenStyle: 0.5,
@@ -26,7 +26,12 @@ const DEFAULTS = {
   elevenSpeakerBoost: true,
   elevenTextNormalization: "on",
   elevenSeedRandom: true,
-  elevenSeed: null
+  elevenSeed: null,
+  streamingEnabled: true,
+  audioCacheEnabled: true,
+  historyEnabled: true,
+  saveFullText: false,
+  maxCacheSizeMb: 100
 };
 
 // modelos que aceitam language_code (enforce). Multilingual v2 auto-detecta.
@@ -515,6 +520,11 @@ function reflectUI() {
   $("elevenTextNormalization").value = cfg.elevenTextNormalization;
   $("elevenSeedRandom").checked = cfg.elevenSeedRandom;
   $("elevenSeed").value = cfg.elevenSeed == null ? "" : cfg.elevenSeed;
+  $("streamingEnabled").checked = cfg.streamingEnabled !== false;
+  $("audioCacheEnabled").checked = cfg.audioCacheEnabled !== false;
+  $("historyEnabled").checked = cfg.historyEnabled !== false;
+  $("saveFullText").checked = cfg.saveFullText === true;
+  $("maxCacheSizeMb").value = Number(cfg.maxCacheSizeMb) || 100;
   reflectSeed();
   reflectKeyStatus();
   updateReadDebug();
@@ -575,6 +585,9 @@ function load() {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local") {
+    if (changes[AUDIO_HISTORY_KEY]) {
+      renderHistory(changes[AUDIO_HISTORY_KEY].newValue || []);
+    }
     if (changes[LAST_OUTPUT_KEY]) {
       lastOutput = changes[LAST_OUTPUT_KEY].newValue || null;
       updateReadDebug();
@@ -623,6 +636,159 @@ function debounce(fn, ms) {
   let t = null;
   return () => { clearTimeout(t); t = setTimeout(fn, ms); };
 }
+
+// ---------------------------------------------------------------------------
+// ElevenLabs history and persistent MP3 cache
+// ---------------------------------------------------------------------------
+const AUDIO_HISTORY_KEY = "yappableAudioHistory";
+let renderedHistory = new Map();
+
+function historyDate(value) {
+  try { return new Date(value).toLocaleString(); } catch (_) { return ""; }
+}
+
+function historyDomain(value) {
+  try { return new URL(value).hostname; } catch (_) { return ""; }
+}
+
+function historyButton(label, action, item, disabled = false) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "hist-action";
+  button.textContent = label;
+  button.dataset.action = action;
+  if (item.id) button.dataset.id = item.id;
+  if (item.request_hash) button.dataset.hash = item.request_hash;
+  button.disabled = disabled;
+  return button;
+}
+
+function renderHistory(history) {
+  const list = $("audioHistoryList");
+  if (!list) return;
+  list.replaceChildren();
+  const items = Array.isArray(history) ? history.slice(0, 20) : [];
+  renderedHistory = new Map(items.map((item) => [item.id, item]));
+  $("historyCount").textContent = items.length ? `${history.length} reads` : "Empty";
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "hist-empty";
+    empty.textContent = "Completed ElevenLabs narrations will appear here.";
+    list.appendChild(empty);
+    return;
+  }
+  for (const item of items) {
+    const row = document.createElement("article");
+    row.className = "hist-item";
+    const title = document.createElement("div");
+    title.className = "hist-title";
+    title.textContent = item.source_title || item.project_label || "Lovable narration";
+    const meta = document.createElement("div");
+    meta.className = "hist-meta";
+    meta.textContent = [
+      historyDate(item.created_at),
+      historyDomain(item.source_url),
+      item.project_label,
+      item.model_id || "—",
+      `${item.text_length || 0} chars`,
+      item.status || "—"
+    ].filter(Boolean).join(" · ");
+    const preview = document.createElement("div");
+    preview.className = "hist-preview";
+    preview.textContent = item.text_preview || "";
+    const actions = document.createElement("div");
+    actions.className = "hist-actions";
+    actions.append(
+      historyButton("Listen", "play", item, !item.audio_storage_ref),
+      historyButton("MP3", "download", item, !item.audio_storage_ref),
+      historyButton("Copy text", "copyText", item),
+      historyButton("Open page", "openPage", item, !item.source_url)
+    );
+    if (item.status === "failed" || item.status === "partial") {
+      actions.append(historyButton("Retry full MP3", "retryFallback", item));
+    }
+    actions.append(
+      historyButton("Delete audio", "deleteAudio", item, !item.audio_storage_ref),
+      historyButton("Delete", "deleteRecord", item)
+    );
+    row.append(title, meta, preview, actions);
+    list.appendChild(row);
+  }
+}
+
+function loadHistory() {
+  chrome.storage.local.get({ [AUDIO_HISTORY_KEY]: [] }, (stored) => {
+    renderHistory(stored[AUDIO_HISTORY_KEY]);
+  });
+}
+
+async function audioAction(action) {
+  const response = await chrome.runtime.sendMessage({
+    __yappable: true,
+    type: "audio.action",
+    action
+  });
+  if (!response?.ok) throw new Error(response?.error || "Audio action failed.");
+}
+
+$("audioHistoryList").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const item = renderedHistory.get(button.dataset.id);
+    if (button.dataset.action === "copyText") {
+      await navigator.clipboard.writeText(item?.text || item?.text_preview || "");
+      msg(item?.text ? "Narration text copied." : "Saved preview copied (full-text storage is off).");
+      return;
+    }
+    if (button.dataset.action === "openPage") {
+      if (item?.source_url) chrome.tabs.create({ url: item.source_url });
+      return;
+    }
+    await audioAction({
+      name: button.dataset.action,
+      id: button.dataset.id || "",
+      hash: button.dataset.hash || ""
+    });
+  } catch (error) {
+    msg(error.message || String(error));
+  } finally {
+    if (button.isConnected) button.disabled = false;
+    loadHistory();
+  }
+});
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.source !== "offscreen" || message?.type !== "audio.event") return;
+  const labels = {
+    checking_cache: "Checking audio cache…",
+    cache_hit: "Playing saved MP3…",
+    streaming: "Streaming from ElevenLabs…",
+    generating: "Generating MP3…",
+    playing: "Playing narration…",
+    saving_audio: "Saving MP3 locally…",
+    completed: "Narration completed.",
+    cancelled: "Narration stopped.",
+    fallback_available: "Stream failed. Full MP3 retry is available in history.",
+    partial: "Stream ended early. Full MP3 retry is available in history.",
+    failed: "Narration failed."
+  };
+  msg(labels[message.state] || "");
+});
+
+$("clearAudioCache").addEventListener("click", async () => {
+  try { await audioAction({ name: "clearCache" }); msg("Audio cache cleared."); }
+  catch (error) { msg(error.message || String(error)); }
+  loadHistory();
+});
+
+$("clearAudioHistory").addEventListener("click", async () => {
+  try { await audioAction({ name: "clearHistory" }); msg("Narration history cleared."); }
+  catch (error) { msg(error.message || String(error)); }
+  loadHistory();
+});
+
 $("cueEnabled").addEventListener("change", (e) => { if (e.target.checked) previewCue(); });
 $("errorAlertEnabled").addEventListener("change", (e) => { if (e.target.checked) previewErrorChime(); });
 $("cueVolume").addEventListener("input", debounce(previewCue, 350));
@@ -638,12 +804,17 @@ bindToggle("verboseEnabled");
 bindToggle("waveformEnabled");
 bindToggle("elevenSpeakerBoost");
 bindToggle("elevenSeedRandom");
+bindToggle("streamingEnabled");
+bindToggle("audioCacheEnabled");
+bindToggle("historyEnabled");
+bindToggle("saveFullText");
 bindSelect("nativeVoice");
 bindSelect("elevenVoiceId");
 bindSelect("elevenModel");
 bindSelect("elevenOutputFormat");
 bindSelect("elevenTextNormalization");
 bindNumber("elevenSeed");
+bindNumber("maxCacheSizeMb");
 bindRange("cueVolume", "cueVolumeOut", 2);
 bindRange("errorVolume", "errorVolumeOut", 2);
 bindRange("delayMs", "delayMsOut", 0);
@@ -664,3 +835,4 @@ $("testNative").addEventListener("click", testNative);
 window.addEventListener("unload", stopAll);
 
 load();
+loadHistory();

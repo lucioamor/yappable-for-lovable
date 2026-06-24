@@ -1,6 +1,6 @@
 # Yappable Privacy Policy
 
-Last updated: 2026-06-16
+Last updated: 2026-06-23
 
 Yappable is a Chrome extension that narrates completed Lovable agent responses.
 
@@ -8,7 +8,7 @@ Yappable is a Chrome extension that narrates completed Lovable agent responses.
 
 Yappable reads completed agent message text and task titles from `https://lovable.dev/*` pages so it can create spoken narration and show the latest observed output in the popup.
 
-Yappable stores extension settings, the latest observed output, optional ElevenLabs settings, and optional ElevenLabs voice metadata in Chrome extension storage.
+Yappable stores extension settings, the latest observed output, optional ElevenLabs settings, optional ElevenLabs voice metadata, and lightweight narration history in Chrome extension storage. When MP3 caching is enabled, completed audio is stored locally in IndexedDB. Full narration text is not stored in history unless you explicitly enable that setting.
 
 ## Local Processing
 
@@ -38,7 +38,7 @@ Optional affiliate links are outbound links. They do not send Lovable message te
 
 ## Data Deletion
 
-You can remove the ElevenLabs API key from the Yappable settings modal. You can also clear all Yappable settings and cached data by removing the extension or clearing the extension's stored data in Chrome.
+You can remove the ElevenLabs API key, clear the MP3 cache, clear narration history, delete individual audio files, or delete individual history records from Yappable. Removing the extension or clearing its stored data in Chrome also removes local data.
 
 ## Limited Use
 
