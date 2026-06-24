@@ -7,6 +7,7 @@
 // ============================================================================
 const $ = (id) => document.getElementById(id);
 const VOICE_CACHE_KEY = "elevenVoicesCache";
+const REQUEST_TIMEOUT_MS = 15000;
 
 const keyEl = $("key");
 const activateEl = $("activate");
@@ -32,6 +33,11 @@ $("reveal").addEventListener("click", () => {
 
 function finish() {
   chrome.storage.local.set({ onboardingDone: true }, () => {
+    if (chrome.runtime.lastError) {
+      msg("Could not save setup: " + chrome.runtime.lastError.message);
+      activateEl.disabled = false;
+      return;
+    }
     // fecha a aba do onboarding; se não der, mostra confirmação.
     chrome.tabs?.getCurrent?.((tab) => {
       if (tab?.id) chrome.tabs.remove(tab.id);
@@ -48,8 +54,13 @@ $("activate").addEventListener("click", async () => {
   activateEl.disabled = true;
   setStatus("", "Verifying key…");
   msg("");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": key } });
+    const res = await fetch("https://api.elevenlabs.io/v1/voices", {
+      headers: { "xi-api-key": key },
+      signal: controller.signal
+    });
     if (res.status === 401) { setStatus("bad", "Invalid API key — check and try again."); activateEl.disabled = false; return; }
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
@@ -62,18 +73,38 @@ $("activate").addEventListener("click", async () => {
     chrome.storage.local.set({
       elevenKey: key,
       [VOICE_CACHE_KEY]: { key, at: Date.now(), voices }
+    }, () => {
+      if (chrome.runtime.lastError) {
+        setStatus("bad", "Could not save the API key: " + chrome.runtime.lastError.message);
+        activateEl.disabled = false;
+        return;
+      }
+      chrome.storage.sync.set({ engine: "elevenlabs" }, () => {
+        if (chrome.runtime.lastError) {
+          setStatus("bad", "Could not activate ElevenLabs: " + chrome.runtime.lastError.message);
+          activateEl.disabled = false;
+          return;
+        }
+        msg("ElevenLabs activated. Opening Lovable…", true);
+        setTimeout(finish, 700);
+      });
     });
-    chrome.storage.sync.set({ engine: "elevenlabs" });
-    msg("ElevenLabs activated. Opening Lovable…", true);
-    setTimeout(finish, 700);
   } catch (e) {
-    setStatus("bad", "Could not reach ElevenLabs: " + e.message);
+    const detail = controller.signal.aborted ? "request timed out" : e.message;
+    setStatus("bad", "Could not reach ElevenLabs: " + detail);
     activateEl.disabled = false;
+  } finally {
+    clearTimeout(timeout);
   }
 });
 
 // Segue na voz nativa: garante motor nativo e encerra.
 $("skip").addEventListener("click", () => {
-  chrome.storage.sync.set({ engine: "native" });
-  finish();
+  chrome.storage.sync.set({ engine: "native" }, () => {
+    if (chrome.runtime.lastError) {
+      msg("Could not save setup: " + chrome.runtime.lastError.message);
+      return;
+    }
+    finish();
+  });
 });

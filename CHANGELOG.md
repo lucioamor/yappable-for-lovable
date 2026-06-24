@@ -6,6 +6,28 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- Prevented an ElevenLabs API key from being lost during migration from synced
+  storage to local-only storage. The migration now copies successfully before
+  deleting the legacy value and loads settings in a deterministic order.
+- Added request timeouts to onboarding, voice-list loading, and speech
+  generation so network failures cannot leave controls or narration stuck.
+- Added a native speech watchdog for Chrome cases where speech stops without an
+  `end` or `error` event, allowing queued narration to continue.
+- Replaced remotely loaded language flags with local country-code markers, so
+  the popup remains private and usable offline without contacting a flag CDN.
+
+### Quality
+
+- Added a dependency-free QA command covering JavaScript syntax, manifest file
+  references, changelog/version consistency, narration modes, risk detection,
+  metric extraction, speech shaping, and completion-sound interception.
+
+---
+
 ## What's new in 0.2.0 — *Speaks your language, narrates live*
 
 The biggest update since launch. v0.2.0 turns Yappable from a "read the final
