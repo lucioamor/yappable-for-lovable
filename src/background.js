@@ -39,6 +39,7 @@ const INSTALL_SEED = {
   verboseEnabled: false,
   mode: "beginner",
   cueEnabled: true,
+  cueVolume: 0.8,
   errorAlertEnabled: true,
   streamingEnabled: true,
   audioCacheEnabled: true,

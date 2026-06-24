@@ -17,7 +17,7 @@
 
     cueEnabled: true, // toca um som antes da narração
     cueFile: "assets/single-sound-message-icq-ooh.mp3",
-    cueVolume: 0.5,
+    cueVolume: 0.8,
 
     // Alerta de ERRO do Lovable (toast "Try to fix" no #preview-panel).
     // Sinal distinto da "nova mensagem": bipe de atenção + chamado curto pra
