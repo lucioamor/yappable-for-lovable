@@ -52,28 +52,6 @@
     return !!document.querySelector(".animate-shimmer-gradient, [style*='task-status-spin']");
   }
 
-  // Widget novo de background task (barra flutuante acima do chat-input). Mesma
-  // âncora estável do content.js: o status sr-only "N background task(s)".
-  // Devolve { title, desc } ou null.
-  function readTaskWidget() {
-    const status = [...document.querySelectorAll('[role="status"][aria-live]')]
-      .find((s) => /background task/i.test(s.textContent || ""));
-    if (!status) return null;
-    const scope = status.parentElement || status;
-    const btn = [...scope.querySelectorAll("li button")].pop();
-    if (!btn) return null;
-    const muted = btn.querySelector("span.text-muted-foreground");
-    const desc = muted ? cleanStr(muted.textContent).replace(/^[\s:]+/, "") : "";
-    const wrap = muted ? muted.parentElement : btn.querySelector("span.truncate");
-    let title = "";
-    if (wrap) {
-      const c = wrap.cloneNode(true);
-      c.querySelectorAll("span.text-muted-foreground").forEach((n) => n.remove());
-      title = cleanStr(c.textContent);
-    }
-    return (title || desc) ? { title, desc } : null;
-  }
-
   function topOf(el) {
     let n = el;
     while (n && n !== document.body) {
@@ -117,7 +95,7 @@
     // DOM novo: a task vive no widget flutuante (sem o aria-label antigo). Lê o
     // título (rótulo) — ou, se só houver a linha de ação curta, ela vira status.
     if (!t) {
-      const w = readTaskWidget();
+      const w = root.LovableTaskWidget.read(document);
       if (w) {
         // When title is a generic state word ("Working", "Transcribing"), capture
         // it as taskStatus and fall through to desc as the meaningful label — so

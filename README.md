@@ -39,6 +39,8 @@ Reading is a commodity. Knowing *what's happening right now and where to look* i
 - **Four narration modes** — Fast, Beginner, Advanced, Full (see below)
 - **On-device AI summarization** — uses Chrome's built-in Gemini Nano + Prompt API when available; nothing leaves your machine for this step
 - **Optional ElevenLabs voice** — premium TTS with your own voice and model settings (opt-in)
+- **Low-latency ElevenLabs streaming** — starts playback before generation finishes, with a local MP3 cache and explicit full-file fallback
+- **Local narration history** — replay or download saved MP3s without spending ElevenLabs characters again
 - **Always in your language** — all speech (narration, progress, alerts) is translated on-device to the language you selected during onboarding, regardless of what language Lovable outputs
 - **Verbose mode** — reads the background-task widget in real time: task label once, then every description change verbatim as it happens
 - **Live status** — silence monitor reads the actual on-screen status word ("Transcribing", "Generating") instead of a generic phrase
@@ -69,7 +71,7 @@ Reading is a commodity. Knowing *what's happening right now and where to look* i
 3. Send a message to Lovable — Yappable narrates the response the moment it's done
 4. Use the popup to switch modes, change engines, or tune the voice
 
-Under the hood: Yappable detects Lovable's completion sound at the network level and uses it as a precise "the agent is done" trigger, then runs the finished response text through its interpreter and speaks it via the browser's Speech Synthesis API or ElevenLabs.
+Under the hood: Yappable detects Lovable's completion sound at the network level and uses it as a precise "the agent is done" trigger, then runs the finished response text through its interpreter. Native speech runs in the page. ElevenLabs speech streams through a Manifest V3 offscreen document and completed MP3s can be cached locally in IndexedDB.
 
 ---
 
@@ -93,7 +95,7 @@ The default path (native speech + on-device summary) needs **no account and no A
 
 All processing is local by default. Native speech and on-device AI summaries run entirely in the browser — Lovable response text never leaves your machine in this path.
 
-If you add an ElevenLabs API key, only the final narration text is sent to ElevenLabs to generate audio. Your key is stored in `chrome.storage.local` and is never synced across devices or sent anywhere else.
+If you add an ElevenLabs API key, only the final narration text is sent to ElevenLabs to generate audio. Your key is stored in `chrome.storage.local` and is never synced across devices. Completed MP3s and lightweight history metadata are stored locally when their settings are enabled; full narration text storage is off by default.
 
 Full privacy policy: [docs/privacy-policy.md](docs/privacy-policy.md)
 
@@ -113,6 +115,9 @@ yappable/
 │   ├── renderer.js         # Renders IR → speakable text per narration mode
 │   ├── risk-detector.js    # Flags unvalidated metrics, copy, build, SEO changes
 │   └── silence-monitor.js  # Detects stalls and announces them via the narrator queue
+├── offscreen/
+│   ├── offscreen.html      # Hidden Manifest V3 audio document
+│   └── offscreen-audio-player.js # Streaming, IndexedDB cache, playback, fallback
 ├── popup/
 │   ├── popup.html          # Extension popup UI
 │   └── popup.js            # Popup logic and settings bridge

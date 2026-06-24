@@ -277,6 +277,21 @@
     .seed-row input[type="number"] { width: 110px; min-width: 80px; flex: none; }
     .modal::-webkit-scrollbar { width: 5px; }
     .modal::-webkit-scrollbar-thumb { background: #2d2d31; border-radius: 8px; }
+    .hist-wrap { margin: 10px 0; }
+    .hist-wrap summary { cursor: pointer; display: flex; justify-content: space-between; color: var(--txt-2); font-weight: 700; }
+    .hist-list { display: grid; gap: 8px; margin-top: 10px; max-height: 310px; overflow: auto; }
+    .hist-item { padding: 9px; border: 1px solid var(--border-soft); border-radius: 9px; background: var(--surface-2); }
+    .hist-title { color: var(--txt); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hist-meta { margin-top: 2px; color: var(--muted-2); font-size: 10px; }
+    .hist-preview { margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .hist-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+    .hist-action { cursor: pointer; border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; background: var(--surface); color: var(--txt-2); font: inherit; font-size: 10px; }
+    .hist-action:hover { border-color: var(--accent); color: var(--accent); }
+    .hist-action:disabled { opacity: .35; cursor: default; }
+    .hist-empty { padding: 14px 5px; color: var(--muted-2); font-size: 11px; text-align: center; }
+    .hist-tools { display: flex; gap: 6px; margin-top: 8px; }
+    .setting-check { display: flex; align-items: center; gap: 8px; margin: 8px 0; color: var(--txt-2); font-size: 12px; }
+    .setting-check input { accent-color: var(--accent); }
   </style>
 </head>
 <body>
@@ -434,6 +449,15 @@
   </details>
 
   <!-- debug panel (hidden by default; 5 clicks on logo to toggle) -->
+  <details class="cfg hist-wrap" id="audioHistory">
+    <summary><span>ElevenLabs history</span><span class="cfg-state" id="historyCount">Empty</span></summary>
+    <div class="hist-list" id="audioHistoryList"></div>
+    <div class="hist-tools">
+      <button type="button" class="act ghost mini" id="clearAudioCache">Clear MP3 cache</button>
+      <button type="button" class="act ghost mini" id="clearAudioHistory">Clear history</button>
+    </div>
+  </details>
+
   <details class="debug" id="debugPanel" hidden>
     <summary>Debug — observed output &amp; read text</summary>
     <div class="readdebug">
@@ -485,9 +509,9 @@
         <select id="elevenOutputFormat">
           <option value="mp3_22050_32">22 kHz @ 32 kbps</option>
           <option value="mp3_44100_32">44 kHz @ 32 kbps</option>
-          <option value="mp3_44100_64">44 kHz @ 64 kbps (default)</option>
+          <option value="mp3_44100_64">44 kHz @ 64 kbps</option>
           <option value="mp3_44100_96">44 kHz @ 96 kbps</option>
-          <option value="mp3_44100_128">44 kHz @ 128 kbps</option>
+          <option value="mp3_44100_128">44 kHz @ 128 kbps (default)</option>
           <option value="mp3_44100_192">44 kHz @ 192 kbps (Creator+)</option>
         </select>
       </div>
@@ -506,6 +530,16 @@
       </div>
 
       <!-- Privacy note at the bottom -->
+      <h3>Streaming, cache &amp; history</h3>
+      <label class="setting-check"><input type="checkbox" id="streamingEnabled" /> Stream audio as it is generated</label>
+      <label class="setting-check"><input type="checkbox" id="audioCacheEnabled" /> Save completed MP3 audio locally</label>
+      <label class="setting-check"><input type="checkbox" id="historyEnabled" /> Save narration metadata to history</label>
+      <label class="setting-check"><input type="checkbox" id="saveFullText" /> Save full narration text (off by default)</label>
+      <div class="field nv" title="Oldest saved MP3 files are removed first when this limit is exceeded.">
+        <label for="maxCacheSizeMb">Cache limit (MB)</label>
+        <input type="number" id="maxCacheSizeMb" min="1" max="2048" step="1" />
+      </div>
+
       <h3>Privacy</h3>
       <div class="privacy-note">
         🔒 <strong>Local by default.</strong> Native speech and Nano summaries run in the browser.<br>

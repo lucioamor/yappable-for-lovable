@@ -39,7 +39,13 @@ const INSTALL_SEED = {
   verboseEnabled: false,
   mode: "beginner",
   cueEnabled: true,
-  errorAlertEnabled: true
+  cueVolume: 0.8,
+  errorAlertEnabled: true,
+  streamingEnabled: true,
+  audioCacheEnabled: true,
+  historyEnabled: true,
+  saveFullText: false,
+  maxCacheSizeMb: 100
 };
 
 chrome.runtime.onInstalled.addListener((details) => {
@@ -78,4 +84,50 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     sendResponse({ count: 1 });
   }
   return true; // mantém o canal aberto para a resposta assíncrona
+});
+
+let creatingOffscreen = null;
+
+async function ensureOffscreenDocument() {
+  const url = chrome.runtime.getURL("offscreen/offscreen.html");
+  if (chrome.runtime.getContexts) {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: ["OFFSCREEN_DOCUMENT"],
+      documentUrls: [url]
+    });
+    if (contexts.length) return;
+  }
+  if (!creatingOffscreen) {
+    creatingOffscreen = chrome.offscreen.createDocument({
+      url: "offscreen/offscreen.html",
+      reasons: ["AUDIO_PLAYBACK"],
+      justification: "Stream and play ElevenLabs narration while the popup is closed."
+    }).finally(() => { creatingOffscreen = null; });
+  }
+  await creatingOffscreen;
+}
+
+async function routeAudioMessage(msg) {
+  await ensureOffscreenDocument();
+  const forwarded = { ...msg, target: "offscreen" };
+  if (msg.type === "audio.play" || msg.action?.name === "retryFallback") {
+    const stored = await chrome.storage.sync.get("elevenOutputFormat");
+    const selectedFormat = stored.elevenOutputFormat || msg.request?.outputFormat;
+    if (!selectedFormat) throw new Error("No ElevenLabs audio quality is selected.");
+    if (msg.type === "audio.play") {
+      forwarded.request = { ...msg.request, outputFormat: selectedFormat };
+    } else {
+      forwarded.action = { ...msg.action, outputFormat: selectedFormat };
+    }
+  }
+  return chrome.runtime.sendMessage(forwarded);
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (!msg || msg.__yappable !== true || msg.target === "offscreen" || msg.source === "offscreen") return;
+  if (msg.type !== "audio.play" && msg.type !== "audio.stop" && msg.type !== "audio.action") return;
+  routeAudioMessage(msg)
+    .then((result) => sendResponse(result || { ok: true }))
+    .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+  return true;
 });

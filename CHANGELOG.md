@@ -6,6 +6,43 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- Risk flags are now spoken according to narration mode: none in Fast, the
+  highest-severity flag in Beginner/Advanced, and all flags in Full.
+- Live progress translation waits briefly for the task description to settle
+  and serializes model sessions so only the latest state is processed.
+- Background-task widget extraction is shared by narration and silence
+  monitoring.
+
+### Fixed
+
+- Cue volume now defaults consistently to `0.8` in the popup, content script,
+  and install seed.
+- Removed the unused legacy speech-shaping module.
+
+---
+
+## [0.3.0] — 2026-06-23
+
+### Added
+
+- Progressive ElevenLabs MP3 playback through a Manifest V3 offscreen document.
+- Persistent IndexedDB audio cache keyed by text, voice, model, format, voice settings, seed, normalization, and language.
+- Local narration history with replay, download, copy, source-page, and independent audio/record deletion controls.
+- Configurable streaming, cache, history, full-text retention, and LRU cache-size settings.
+- Explicit full-MP3 retry after a streaming failure.
+
+### Changed
+
+- ElevenLabs now defaults to `eleven_flash_v2_5` with `mp3_44100_128` output.
+- Streaming and full-MP3 fallback now resolve `output_format` from the user's centrally saved quality setting; neither playback path chooses or overrides a bitrate independently.
+- Completed streamed audio is saved locally for zero-character replay when caching is enabled.
+
+---
+
 ## What's new in 0.2.0 — *Speaks your language, narrates live*
 
 The biggest update since launch. v0.2.0 turns Yappable from a "read the final

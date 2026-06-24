@@ -1,8 +1,8 @@
 // ============================================================================
-// risk-detector.js — Modo Risco (QA auditivo) [100% determinístico]
+// risk-detector.js — QA auditivo [100% determinístico]
 //
-// Eixo ORTOGONAL à verbosidade (announce). A "lente" Risco lê o `structure`
-// já extraído pelo content.js e procura, por dicionário de regex (PT + EN,
+// Lê o `structure` já extraído pelo content.js e procura, por dicionário de
+// regex (PT + EN,
 // porque o Lovable responde nos dois), padrões em que o output diz "feito"
 // mas esconde algo que ainda precisa de validação humana.
 //
@@ -10,7 +10,7 @@
 // Saída:    { riskFlags: [{ type, severity, spokenNote }], hasRisk: boolean }
 //
 // `spokenNote` JÁ vem normalizado para fala em PT-BR (pronto pro TTS).
-// `severity` (high|medium|low) é usado depois (Fase 2) para prosódia.
+// `severity` (high|medium|low) define a ordem e o corte por modo de narração.
 //
 // Carregado como content script ANTES de content.js (mesmo isolated world,
 // mesmo `self`), então expõe via `self.LovableRisk`. Também exporta como
