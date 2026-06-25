@@ -39,7 +39,7 @@
     elevenStability: 0.2, // 0–1
     elevenSimilarity: 0.2, // similarity_boost 0–1
     elevenStyle: 0.5, // style exaggeration 0–1 (v2+)
-    elevenSpeed: 1.1, // velocidade (REST 0.25–4.0)
+    elevenSpeed: 1.1, // velocidade (ElevenLabs aceita 0.7–1.2)
     elevenSpeakerBoost: true, // use_speaker_boost
     elevenTextNormalization: "on", // auto | on | off
     elevenSeedRandom: true, // true = sem seed fixo
@@ -448,7 +448,8 @@
       stability: cfg.elevenStability,
       similarity_boost: cfg.elevenSimilarity,
       style: cfg.elevenStyle,
-      speed: cfg.elevenSpeed,
+      // ElevenLabs só aceita speed em 0.7–1.2; fora disso a API devolve 400.
+      speed: clamp(cfg.elevenSpeed, 0.7, 1.2),
       use_speaker_boost: cfg.elevenSpeakerBoost
     };
     const body = {
@@ -490,7 +491,11 @@
             signal: controller.signal
           }
         );
-        if (!res.ok) throw new Error(`ElevenLabs ${res.status}`);
+        if (!res.ok) {
+          let detail = "";
+          try { detail = (await res.text()).slice(0, 300); } catch (_) {}
+          throw new Error(`ElevenLabs ${res.status}${detail ? `: ${detail}` : ""}`);
+        }
         // Keep the timeout active while consuming the body as well. A server can
         // send headers and then stall before the MP3 is complete.
         audioBuffer = await res.arrayBuffer();
