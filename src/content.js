@@ -39,7 +39,7 @@
     elevenStability: 0.2, // 0–1
     elevenSimilarity: 0.2, // similarity_boost 0–1
     elevenStyle: 0.5, // style exaggeration 0–1 (v2+)
-    elevenSpeed: 1.1, // velocidade (REST 0.25–4.0)
+    elevenSpeed: 1.1, // velocidade (ElevenLabs aceita 0.7–1.2)
     elevenSpeakerBoost: true, // use_speaker_boost
     elevenTextNormalization: "on", // auto | on | off
     elevenSeedRandom: true, // true = sem seed fixo
@@ -85,20 +85,32 @@
   let cfg = { ...DEFAULTS };
 
   chrome.storage.sync.get({ ...DEFAULTS, mode: "", announce: "", lens: "" }, (stored) => {
+    const legacyElevenKey = stored.elevenKey || "";
     cfg = { ...DEFAULTS, ...stored };
     delete cfg.announce;
     delete cfg.lens;
     cfg.mode = normalizeMode(stored.mode || stored.announce);
     cfg.lang = resolveLang(cfg.lang); // "auto" -> idioma concreto
     cfg.elevenKey = ""; // loaded from local below
-    if (stored.elevenKey) chrome.storage.sync.remove("elevenKey");
     if (stored.mode !== cfg.mode) chrome.storage.sync.set({ mode: cfg.mode });
     if (stored.announce || stored.lens) chrome.storage.sync.remove(["announce", "lens"]);
-  });
-  // elevenKey and debug live in storage.local (credentials off sync; debug not roamed).
-  chrome.storage.local.get({ elevenKey: "", debug: false }, (local) => {
-    cfg.elevenKey = local.elevenKey || "";
-    cfg.debug = !!local.debug;
+
+    // elevenKey and debug live in storage.local (credentials off sync; debug not
+    // roamed). Load them only after sync so callback order can never erase a key.
+    chrome.storage.local.get({ elevenKey: "", debug: false }, (local) => {
+      cfg.elevenKey = local.elevenKey || legacyElevenKey;
+      cfg.debug = !!local.debug;
+
+      // Migration is copy-then-delete. Never delete the legacy key until the
+      // local write succeeds, otherwise an update can silently lose credentials.
+      if (legacyElevenKey && !local.elevenKey) {
+        chrome.storage.local.set({ elevenKey: legacyElevenKey }, () => {
+          if (!chrome.runtime.lastError) chrome.storage.sync.remove("elevenKey");
+        });
+      } else if (legacyElevenKey) {
+        chrome.storage.sync.remove("elevenKey");
+      }
+    });
   });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local") {
@@ -142,6 +154,7 @@
   let ready = false; // só narra via observer depois do baseline (evita ler histórico no load)
   let currentAudio = null; // <audio> ElevenLabs em andamento (p/ poder parar)
   let currentCue = null;   // <audio> do som de cue (p/ garantir 1 áudio por vez)
+  let currentFetchController = null; // aborta geração ElevenLabs ao desligar/parar
   let playbackEpoch = 0;   // invalida awaits antigos quando a fala é interrompida
 
   // ---------------------------------------------------------------------------
@@ -278,6 +291,12 @@
       try { currentCue.pause(); currentCue.currentTime = 0; } catch (_) {}
       currentCue = null;
     }
+    if (currentFetchController) {
+      try { currentFetchController.abort(); } catch (_) {}
+      currentFetchController = null;
+    }
+    if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
+    currentUtterance = null;
     _wfHide();
     speaking = false;
   }
@@ -389,11 +408,29 @@
         if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
         currentUtterance = null;
       };
-      u.onend = () => { cleanup(); resolve(); };
-      u.onerror = (e) => { cleanup(); reject(e.error || new Error("speech error")); };
+      let settled = false;
+      let started = false;
+      const requestedAt = Date.now();
+      const finish = (err) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (err) reject(err);
+        else resolve();
+      };
+      u.onend = () => finish();
+      u.onerror = (e) => finish(e.error || new Error("speech error"));
+      u.onstart = () => { started = true; };
       // keepalive: Chrome corta fala >~15s; pause+resume evita o corte e o restart
       keepAlive = setInterval(() => {
-        if (!speechSynthesis.speaking) { clearInterval(keepAlive); keepAlive = null; return; }
+        // Chrome occasionally stops without firing onend/onerror. Once speech
+        // started, a silent engine means completion; if it never starts, allow a
+        // 30s startup grace period before releasing the queue.
+        if (!speechSynthesis.speaking) {
+          if (started || Date.now() - requestedAt >= 30000) finish();
+          return;
+        }
+        started = true;
         speechSynthesis.pause();
         speechSynthesis.resume();
       }, 10000);
@@ -404,13 +441,15 @@
 
   // --- TTS ElevenLabs ---
   async function speakEleven(text, epoch) {
+    const ELEVEN_FETCH_TIMEOUT_MS = 30000;
     const fmtParam = cfg.elevenOutputFormat || "mp3_44100_64";
     const sendText = text;
     const voiceSettings = {
       stability: cfg.elevenStability,
       similarity_boost: cfg.elevenSimilarity,
       style: cfg.elevenStyle,
-      speed: cfg.elevenSpeed,
+      // ElevenLabs só aceita speed em 0.7–1.2; fora disso a API devolve 400.
+      speed: clamp(cfg.elevenSpeed, 0.7, 1.2),
       use_speaker_boost: cfg.elevenSpeakerBoost
     };
     const body = {
@@ -434,20 +473,41 @@
     });
     let audioBuffer = _audioCache.get(cacheKey);
     if (!audioBuffer) {
-      const res = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${cfg.elevenVoiceId}?output_format=${fmtParam}`,
-        {
-          method: "POST",
-          headers: {
-            "xi-api-key": cfg.elevenKey,
-            "Content-Type": "application/json",
-            Accept: "audio/mpeg"
-          },
-          body: JSON.stringify(body)
+      const controller = new AbortController();
+      currentFetchController = controller;
+      const timeout = setTimeout(() => controller.abort(), ELEVEN_FETCH_TIMEOUT_MS);
+      let res;
+      try {
+        res = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${cfg.elevenVoiceId}?output_format=${fmtParam}`,
+          {
+            method: "POST",
+            headers: {
+              "xi-api-key": cfg.elevenKey,
+              "Content-Type": "application/json",
+              Accept: "audio/mpeg"
+            },
+            body: JSON.stringify(body),
+            signal: controller.signal
+          }
+        );
+        if (!res.ok) {
+          let detail = "";
+          try { detail = (await res.text()).slice(0, 300); } catch (_) {}
+          throw new Error(`ElevenLabs ${res.status}${detail ? `: ${detail}` : ""}`);
         }
-      );
-      if (!res.ok) throw new Error(`ElevenLabs ${res.status}`);
-      audioBuffer = await res.arrayBuffer();
+        // Keep the timeout active while consuming the body as well. A server can
+        // send headers and then stall before the MP3 is complete.
+        audioBuffer = await res.arrayBuffer();
+      } catch (err) {
+        if (controller.signal.aborted && playbackCurrent(epoch)) {
+          throw new Error("ElevenLabs request timed out");
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeout);
+        if (currentFetchController === controller) currentFetchController = null;
+      }
       if (_audioCache.size >= AUDIO_CACHE_MAX) {
         _audioCache.delete(_audioCache.keys().next().value);
       }
@@ -463,16 +523,33 @@
       audio = new Audio(url);
       currentAudio = audio; // ref global p/ stopSpeaking()
       audio.volume = cfg.volume;
+      const playbackTimeoutMs = clamp(text.length * 250, 60000, 30 * 60 * 1000);
+      let settled = false;
+      let playbackTimeout = null;
+      const finish = (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(playbackTimeout);
+        _wfHide();
+        if (err) {
+          try { audio.pause(); audio.currentTime = 0; } catch (_) {}
+          reject(err);
+        }
+        else resolve();
+      };
+      playbackTimeout = setTimeout(
+        () => finish(new Error("ElevenLabs audio playback timed out")),
+        playbackTimeoutMs
+      );
       _wfStartEleven(audio);
-      audio.onended = () => { _wfHide(); resolve(); };
+      audio.onended = () => finish();
       audio.onpause = () => {
         if (epoch != null && !playbackCurrent(epoch)) {
-          _wfHide();
-          resolve();
+          finish();
         }
       };
-      audio.onerror = () => { _wfHide(); reject(new Error("audio play error")); };
-      audio.play().catch((err) => { _wfHide(); reject(err); });
+      audio.onerror = () => finish(new Error("audio play error"));
+      audio.play().catch((err) => finish(err));
     }).finally(() => { URL.revokeObjectURL(url); if (currentAudio === audio) currentAudio = null; });
   }
 
@@ -1132,7 +1209,15 @@
         const a = new Audio(chrome.runtime.getURL(cfg.cueFile));
         currentCue = a; // ref global: evita colisão (1 áudio por vez)
         a.volume = cfg.cueVolume;
-        const done = () => { if (currentCue === a) currentCue = null; resolve(); };
+        const timeout = setTimeout(() => {
+          try { a.pause(); a.currentTime = 0; } catch (_) {}
+          done();
+        }, 5000);
+        function done() {
+          clearTimeout(timeout);
+          if (currentCue === a) currentCue = null;
+          resolve();
+        }
         a.onended = done;
         a.onpause = done;
         a.onerror = done; // não trava narração se o som falhar
