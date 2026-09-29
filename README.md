@@ -1,10 +1,10 @@
-# Yappable for Lovable — Every build, debriefed
+# Yappable for Lovable — Voice mode that reads chat & talks back
 
-Natural voice companion for [Lovable](https://lovable.dev) that briefs you audibly on every prompt — what changed, why it matters, and what to do next. Selectable interpretation according to user experience, from beginners to advanced builders.
+A voice companion for [Lovable](https://lovable.dev) that **talks back**: it reads every build aloud the instant Lovable finishes — what changed, why it matters, and what to do next. Hands-free voice updates in your language, with selectable interpretation from beginners to advanced builders.
 
 *Independent extension for Lovable builders.*
 
-> Lovable ships fast. Reading keeps your eyes glued to the chat. **Yappable frees them.**
+> Lovable ships fast. Reading keeps your eyes glued to the chat. **Yappable talks back so you don't have to read.**
 
 It's not a screen reader. It's a co-pilot that tells you **what changed, why it matters, and what to double-check** — in a few seconds of natural speech, with the markdown, file paths, and symbol noise stripped out.
 
@@ -101,13 +101,32 @@ speech shaping, and completion-sound interception.
 
 ---
 
+## Chat narration (ChatGPT, Claude, Gemini, Grok)
+
+Yappable also reads the finished reply on **chatgpt.com, claude.ai, gemini.google.com and grok.com**, with the same floating player.
+
+- **Two voices.** *Site*: Yappable presses the site's own "read aloud" for free. *Yappable*: an on-device summary (same modes as Lovable) spoken by ElevenLabs or your system voice. Switch from the player.
+- **Announced replies.** Claude and Gemini replies start with "Resposta do Claude:" / "Resposta do Gemini:" (localized). The full reply is always spoken; nothing is cut off.
+- **Player.** Play/pause, −15 s / +15 s (where the site's audio can seek) and speed from 0.5× to 3×. Shortcuts: `Alt+K` play/pause, `Alt+J` / `Alt+L` −15 / +15 s, `Alt+,` / `Alt+.` slower / faster, `Alt+0` reset, `Esc` stop.
+- **Per-site details** (DOM signals, how each site's text-to-speech works) are in [docs/CHAT-SITES-DOM.md](docs/CHAT-SITES-DOM.md).
+
+Chat narration needs Chrome to grant access to those four sites when you install or update.
+
+---
+
 ## Privacy
 
 All processing is local by default. Native speech and on-device AI summaries run entirely in the browser — Lovable response text never leaves your machine in this path.
 
-If you add an ElevenLabs API key, only the final narration text is sent to ElevenLabs to generate audio. Your key is stored in `chrome.storage.local` and is never synced across devices or sent anywhere else.
+On the chat sites, "Site" voice uses that site's own read-aloud (the site already has your reply), and Yappable only reads the assistant's latest reply. If you add an ElevenLabs API key, only the final narration text is sent to ElevenLabs to generate audio. Your key is stored in `chrome.storage.local` and is never synced across devices or sent anywhere else.
 
 Full privacy policy: [docs/privacy-policy.md](docs/privacy-policy.md)
+
+---
+
+## Store listing
+
+The copy used for the Chrome Web Store (name, short/detailed description, and "what's new") lives in [docs/chrome-store-listing.md](docs/chrome-store-listing.md) — keep it in sync with `manifest.json` and `CHANGELOG.md` on each release.
 
 ---
 
@@ -121,6 +140,12 @@ yappable/
 │   ├── background.js       # Service worker — tab counting, install seed
 │   ├── content.js          # Observer, gate, extraction, TTS, queue
 │   ├── inject.js           # MAIN world — intercepts fetch, emits completion signal
+│   ├── logger.js           # Structured debug logging
+│   ├── tts-provider.js     # ElevenLabs key verification and quota
+│   ├── chat-adapters.js    # ChatGPT / Claude / Gemini / Grok reply detection
+│   ├── chat-narrator.js    # Chat replies → site voice or Yappable voice
+│   ├── media-hook.js       # MAIN world — controls the sites' own TTS audio
+│   ├── player-ui.js        # Floating player + keyboard shortcuts
 │   ├── ir-builder.js       # Builds Intermediate Representation from agent output
 │   ├── renderer.js         # Renders IR → speakable text per narration mode
 │   ├── risk-detector.js    # Flags unvalidated metrics, copy, build, SEO changes
