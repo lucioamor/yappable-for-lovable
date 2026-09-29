@@ -11,3 +11,6 @@ Thumbs.db
 
 # Private lessons learned (kept local, never published)
 LESSONS-LEARNED.md
+
+# Build output (npm run package)
+*.zip

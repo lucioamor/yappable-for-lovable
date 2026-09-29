@@ -173,7 +173,7 @@ test("background seeds defaults, opens onboarding once, and counts project tabs"
         onMessage: { addListener: (fn) => { onMessage = fn; } }
       },
       storage: {
-        local: { get: (_defaults, cb) => cb({ onboardingDone: false }) },
+        local: { get: (_defaults, cb) => cb({ onboardingDone: false }), set: (_val, cb) => { if (cb) cb(); } },
         sync: {
           get: (keys, cb) => {
             if (Array.isArray(keys)) cb({});

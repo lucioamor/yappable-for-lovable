@@ -1,9 +1,10 @@
 {
   "name": "yappable-for-lovable",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "qa": "node scripts/qa.js"
+    "qa": "node scripts/qa.js",
+    "package": "node scripts/package.js"
   }
 }

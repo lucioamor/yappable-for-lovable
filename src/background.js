@@ -1,20 +1,25 @@
 // ============================================================================
-// background.js — service worker mínimo (MV3).
+// background.js — service worker (MV3).
 //
-// Único papel: contar quantas abas do lovable.dev estão abertas, para o content
-// script decidir se a fala precisa identificar de qual projeto se trata. Com uma
-// só aba não há ambiguidade e nenhum rótulo é dito.
-//
-// NÃO requer a permissão "tabs": o host_permission de https://lovable.dev/*
-// já concede visibilidade da URL dessas abas em chrome.tabs.query (a query é
-// filtrada pelo próprio padrão de host permitido).
+// Roles:
+//   1. Count open Lovable project tabs (content script queries this).
+//   2. Phase 1: Log sink — receives __yapLog messages from content/popup and
+//      routes them to YapLog.receive() (background-mode logger owns the ring).
+//   3. Phase 5: Auth model — owns the `auth` object in storage.local, seeds
+//      it on install, migrates legacy elevenKey on first run.
 // ============================================================================
 "use strict";
 
+// Background-mode logger (IS_BG=true path in logger.js). Owns the run ring
+// and breadcrumb ring. importScripts resolved relative to src/.
+try { importScripts("logger.js"); } catch (_) {}
+const L = globalThis.YapLog || {
+  ok() {}, info() {}, fallback() {}, fail() {}, start: () => () => {},
+  receive() {}, closeRun() {}
+};
+
 // ============================================================================
-// Idioma padrão = idioma do navegador, escolhido já na instalação (sem precisar
-// abrir o popup). Só grava se o usuário ainda não tem idioma salvo — nunca
-// sobrescreve uma escolha existente. Mantém em sync com a lista de LANGS do popup.
+// Language seeding
 // ============================================================================
 const SUPPORTED_LANGS = [
   "pt-BR", "pt-PT", "en-US", "en-GB", "es-ES", "es-MX", "fr-FR", "de-DE",
@@ -31,9 +36,6 @@ function pickLang(ui) {
   return SUPPORTED_LANGS.find((c) => c.split("-")[0].toLowerCase() === prefix) || "en-US";
 }
 
-// Seed gravado já na instalação, pra UI começar pré-selecionada (narração on,
-// verboso off, modo beginner, cue + alerta de erro on). Só grava chaves AUSENTES
-// — nunca sobrescreve escolha do usuário num update.
 const INSTALL_SEED = {
   enabled: true,
   verboseEnabled: false,
@@ -42,12 +44,68 @@ const INSTALL_SEED = {
   errorAlertEnabled: true
 };
 
+// ============================================================================
+// Phase 5: Auth model
+// ============================================================================
+const AUTH_V = 1;
+
+function defaultAuth() {
+  return {
+    v: AUTH_V,
+    activeEngine: "native",
+    providers: {
+      elevenlabs: {
+        credential: null,
+        status: "unconfigured", // unconfigured|unverified|verifying|valid|invalid|quota_exceeded|network_error
+        account: null,
+        voices: [],
+        voicesAt: null
+      }
+    }
+  };
+}
+
+// Build an auth object from a legacy elevenKey string (migration path).
+function authFromLegacyKey(elevenKey) {
+  const auth = defaultAuth();
+  if (elevenKey) {
+    auth.providers.elevenlabs.credential = {
+      type: "apiKey",
+      value: elevenKey,
+      addedAt: null,
+      lastVerifiedAt: null
+    };
+    auth.providers.elevenlabs.status = "unverified";
+  }
+  return auth;
+}
+
+// Ensure the auth object exists in storage.local; migrate from elevenKey if needed.
+function ensureAuth() {
+  chrome.storage.local.get({ elevenKey: "", auth: null }, (local) => {
+    if (chrome.runtime.lastError) return;
+    if (local.auth && local.auth.v === AUTH_V) return; // already migrated
+    const auth = authFromLegacyKey(local.elevenKey || "");
+    chrome.storage.local.set({ auth }, () => {
+      if (chrome.runtime.lastError) return;
+      L.info("config", "ensureAuth", "auth inicializado/migrado", { hadKey: !!local.elevenKey });
+    });
+  });
+}
+
+// ============================================================================
+// onInstalled
+// ============================================================================
 chrome.runtime.onInstalled.addListener((details) => {
+  L.info("install", "onInstalled", "extensão instalada/atualizada", { reason: details && details.reason });
+
   chrome.storage.sync.get({ lang: "" }, (st) => {
-    if (st.lang) return; // já configurado: respeita a escolha do usuário
+    if (st.lang) return;
     let ui = "";
     try { ui = chrome.i18n.getUILanguage(); } catch (_) {}
-    chrome.storage.sync.set({ lang: pickLang(ui) });
+    const lang = pickLang(ui);
+    chrome.storage.sync.set({ lang });
+    L.ok("install", "onInstalled", "idioma inicial definido pelo navegador", { ui, lang });
   });
 
   chrome.storage.sync.get(Object.keys(INSTALL_SEED), (st) => {
@@ -56,8 +114,6 @@ chrome.runtime.onInstalled.addListener((details) => {
     if (Object.keys(patch).length) chrome.storage.sync.set(patch);
   });
 
-  // Primeira instalação: abre o onboarding em tela cheia (chave da ElevenLabs).
-  // Só na instalação real, e só se ainda não concluído.
   if (details && details.reason === "install") {
     chrome.storage.local.get({ onboardingDone: false }, (st) => {
       if (st.onboardingDone) return;
@@ -66,16 +122,40 @@ chrome.runtime.onInstalled.addListener((details) => {
       } catch (_) {}
     });
   }
+
+  // Phase 5: ensure auth object exists after install/update
+  ensureAuth();
 });
 
+// Also ensure auth on startup (handles first run after update without reinstall)
+ensureAuth();
+
+// ============================================================================
+// Message router
+// ============================================================================
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (!msg || msg.__yappable !== true || msg.type !== "countLovableTabs") return;
+  if (!msg) return;
+
+  // Phase 1: log sink — entries forwarded from content / popup contexts
+  if (msg.__yapLog) {
+    const log = globalThis.YapLog;
+    if (log && typeof log.receive === "function") {
+      log.receive(msg.entry, !!msg.bcumb);
+    }
+    return false;
+  }
+
+  // Tab count query from content scripts
+  if (!msg.__yappable || msg.type !== "countLovableTabs") return;
   try {
     chrome.tabs.query({ url: "https://lovable.dev/projects/*" }, (tabs) => {
-      sendResponse({ count: Array.isArray(tabs) ? tabs.length : 1 });
+      const count = Array.isArray(tabs) ? tabs.length : 1;
+      L.info("tabs", "countLovableTabs", "abas de projeto Lovable contadas", { count });
+      sendResponse({ count });
     });
-  } catch (_) {
+  } catch (err) {
+    L.fail("tabs", "countLovableTabs", "falha ao contar abas; assume 1", { err });
     sendResponse({ count: 1 });
   }
-  return true; // mantém o canal aberto para a resposta assíncrona
+  return true; // keep channel open for async sendResponse
 });
