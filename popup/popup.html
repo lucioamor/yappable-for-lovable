@@ -55,7 +55,7 @@
     .header-brand { display: flex; flex-direction: column; gap: 2px; }
     .header-actions { display: flex; align-items: center; gap: 8px; }
 
-    /* compact language flag pill in topbar */
+    /* compact local country-code pill in topbar */
     .lang-pill { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 5px 9px; cursor: pointer;
       background: var(--surface-2); color: var(--txt-2); border: 1px solid var(--border); border-radius: 8px; font: inherit; font-weight: 600; }
     .lang-pill:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
@@ -238,8 +238,8 @@
     /* ── language dropdown ───────────────────────────── */
     .dropdown { position: relative; }
     .flag-pill { width: 28px; min-width: 28px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
-      border-radius: 3px; overflow: hidden; background: var(--border); }
-    .flag-pill img { display: block; width: 20px; height: 15px; border-radius: 2px; object-fit: cover; }
+      border-radius: 3px; overflow: hidden; background: var(--border); color: var(--txt-2);
+      font-size: 9px; font-weight: 800; letter-spacing: .08em; }
     .dd-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 5; max-height: 240px; overflow: auto;
       background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.5); padding: 4px; }
     .dd-list[hidden] { display: none; }

@@ -6,6 +6,11 @@
   "permissions": ["storage", "declarativeNetRequest"],
   "host_permissions": [
     "https://lovable.dev/*",
+    "https://claude.ai/*",
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*",
+    "https://grok.com/*",
     "https://api.elevenlabs.io/*"
   ],
   "declarative_net_request": {
@@ -30,6 +35,17 @@
     {
       "matches": ["https://lovable.dev/*"],
       "js": ["src/risk-detector.js", "src/ir-builder.js", "src/renderer.js", "src/silence-monitor.js", "src/content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://claude.ai/*", "https://chatgpt.com/*", "https://chat.openai.com/*", "https://gemini.google.com/*", "https://grok.com/*"],
+      "js": ["src/media-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://claude.ai/*", "https://chatgpt.com/*", "https://chat.openai.com/*", "https://gemini.google.com/*", "https://grok.com/*"],
+      "js": ["src/chat-adapters.js", "src/player-ui.js", "src/chat-narrator.js"],
       "run_at": "document_idle"
     }
   ],

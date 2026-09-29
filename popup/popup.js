@@ -85,6 +85,7 @@ const GROUPS = {
 const SAMPLE = "Yappable is active. This is the selected voice.";
 const VOICE_CACHE_KEY = "elevenVoicesCache"; // chrome.storage.local: { key, at, voices:[{id,name,lang}] }
 const LAST_OUTPUT_KEY = "lovableNarratorLastOutput";
+const REQUEST_TIMEOUT_MS = 15000;
 const MAX_DELAY_MS = 3000;
 const MODES = ["fast", "beginner", "advanced", "completo"];
 const LEGACY_TO_MODE = {
@@ -290,12 +291,8 @@ $("brandTitle").addEventListener("click", () => {
 function makeFlagPill(cc) {
   const span = document.createElement("span");
   span.className = "flag-pill";
-  const img = document.createElement("img");
-  img.src = `https://flagcdn.com/20x15/${cc}.png`;
-  img.width = 20;
-  img.height = 15;
-  img.alt = cc.toUpperCase();
-  span.appendChild(img);
+  span.textContent = cc.toUpperCase();
+  span.setAttribute("aria-hidden", "true");
   return span;
 }
 
@@ -410,14 +407,26 @@ function populateElevenVoices(voices) {
 }
 
 async function fetchElevenVoices() {
-  const res = await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": cfg.elevenKey } });
-  if (!res.ok) throw new Error("HTTP " + res.status);
-  const data = await res.json();
-  return (data.voices || []).map((v) => ({
-    id: v.voice_id,
-    name: v.name,
-    lang: v.labels?.language || v.labels?.accent || ""
-  }));
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://api.elevenlabs.io/v1/voices", {
+      headers: { "xi-api-key": cfg.elevenKey },
+      signal: controller.signal
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    return (data.voices || []).map((v) => ({
+      id: v.voice_id,
+      name: v.name,
+      lang: v.labels?.language || v.labels?.accent || ""
+    }));
+  } catch (err) {
+    if (controller.signal.aborted) throw new Error("request timed out");
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function loadElevenVoices(force) {
@@ -527,15 +536,8 @@ function reflectUI() {
 // Carregar config
 // ---------------------------------------------------------------------------
 function load() {
-  // Migration: elevenKey from sync → local.
-  chrome.storage.sync.get({ elevenKey: "" }, (syncData) => {
-    if (syncData.elevenKey) {
-      chrome.storage.local.set({ elevenKey: syncData.elevenKey });
-      chrome.storage.sync.remove("elevenKey");
-    }
-  });
-
   chrome.storage.sync.get({ ...DEFAULTS, mode: "", announce: "", lens: "" }, (stored) => {
+    const legacyElevenKey = stored.elevenKey || "";
     cfg = { ...DEFAULTS, ...stored };
     delete cfg.announce;
     delete cfg.lens;
@@ -548,28 +550,38 @@ function load() {
     }
     if (stored.mode !== cfg.mode) chrome.storage.sync.set({ mode: cfg.mode });
     if (stored.announce || stored.lens) chrome.storage.sync.remove(["announce", "lens"]);
-    buildLangDropdown();
-    populateNativeVoices();
-    reflectUI();
-    if (!cfg.enabled) stopAllTabs();
-    const sel = $("elevenVoiceId");
-    if (!sel.options.length || sel.options[0].value === "") {
-      const option = document.createElement("option");
-      option.value = cfg.elevenVoiceId;
-      option.textContent = `${cfg.elevenVoiceId} (current)`;
-      sel.replaceChildren(option);
-    }
-  });
 
-  chrome.storage.local.get([LAST_OUTPUT_KEY, "elevenKey", "debug"], (stored) => {
-    lastOutput = stored[LAST_OUTPUT_KEY] || null;
-    cfg.elevenKey = stored.elevenKey || "";
-    cfg.debug = !!stored.debug;
-    reflectKeyStatus();
-    $("debugPanel").hidden = !cfg.debug;
-    if (cfg.elevenKey) loadElevenVoices(false);
-    updateReadDebug();
-    requestLastOutputFromTab();
+    // Resolve local data after sync. This prevents a slower sync callback from
+    // overwriting the credential that a faster local callback just loaded.
+    chrome.storage.local.get([LAST_OUTPUT_KEY, "elevenKey", "debug"], (local) => {
+      lastOutput = local[LAST_OUTPUT_KEY] || null;
+      cfg.elevenKey = local.elevenKey || legacyElevenKey;
+      cfg.debug = !!local.debug;
+
+      buildLangDropdown();
+      populateNativeVoices();
+      reflectUI();
+      if (!cfg.enabled) stopAllTabs();
+      const sel = $("elevenVoiceId");
+      if (!sel.options.length || sel.options[0].value === "") {
+        const option = document.createElement("option");
+        option.value = cfg.elevenVoiceId;
+        option.textContent = `${cfg.elevenVoiceId} (current)`;
+        sel.replaceChildren(option);
+      }
+      if (cfg.elevenKey) loadElevenVoices(false);
+      requestLastOutputFromTab();
+
+      // Copy first, delete second: a failed local write must not destroy the
+      // legacy sync credential during extension upgrades.
+      if (legacyElevenKey && !local.elevenKey) {
+        chrome.storage.local.set({ elevenKey: legacyElevenKey }, () => {
+          if (!chrome.runtime.lastError) chrome.storage.sync.remove("elevenKey");
+        });
+      } else if (legacyElevenKey) {
+        chrome.storage.sync.remove("elevenKey");
+      }
+    });
   });
 }
 

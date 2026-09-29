@@ -6,6 +6,48 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and
 
 ---
 
+## [Unreleased]
+
+### Added
+- Chat narration on claude.ai and chatgpt.com (`src/chat-adapters.js`, `src/chat-narrator.js`):
+  reads each finished assistant reply aloud (code blocks and citation chips stripped).
+  Full reply is always spoken (no length cap). Sync keys `chatNarration` (default on) and
+  `chatVoiceMode`: "site" clicks the site's own read-aloud, "yappable" runs the on-device
+  interpretation layer + ElevenLabs (or system voice).
+- Gemini support (gemini.google.com): reply detection and the native "Ouvir" voice.
+- Grok support (grok.com): reply detection (its stop button ends before the answer starts, so the
+  end is detected by the text settling) and the native "Ler em voz alta". Grok's audio stream is
+  not seekable, so the player greys out −15/+15 whenever the element reports no seekable range.
+- Spoken prefix before every chat reply ("Resposta do Claude:", "Resposta do Gemini:", localized;
+  sync key `chatAnnounce`, default on). On Claude and Gemini `media-hook.js` rewrites the text
+  the site sends to its own TTS, so the site's voice also reads the on-device summary when
+  `mode` isn't `completo`. ChatGPT sends no text to its TTS, so Site mode reads it unchanged.
+- Universal player modal (`src/player-ui.js`) with play/pause, ±15 s, speed 0.5–3×
+  (remembered as `playerRate`) and shortcuts Alt+K / Alt+J / Alt+L / Alt+, / Alt+. / Alt+0 / Esc.
+- `src/media-hook.js` (MAIN world) makes the sites' native TTS controllable: adopts
+  ChatGPT's `<audio>`, captures Claude's Web Audio stream into a seekable WAV player.
+  DOM and audio notes in `docs/CHAT-SITES-DOM.md`.
+
+### Fixed
+
+- Prevented an ElevenLabs API key from being lost during migration from synced
+  storage to local-only storage. The migration now copies successfully before
+  deleting the legacy value and loads settings in a deterministic order.
+- Added request timeouts to onboarding, voice-list loading, and speech
+  generation so network failures cannot leave controls or narration stuck.
+- Added a native speech watchdog for Chrome cases where speech stops without an
+  `end` or `error` event, allowing queued narration to continue.
+- Replaced remotely loaded language flags with local country-code markers, so
+  the popup remains private and usable offline without contacting a flag CDN.
+
+### Quality
+
+- Added a dependency-free QA command covering JavaScript syntax, manifest file
+  references, changelog/version consistency, narration modes, risk detection,
+  metric extraction, speech shaping, and completion-sound interception.
+
+---
+
 ## What's new in 0.2.0 — *Speaks your language, narrates live*
 
 The biggest update since launch. v0.2.0 turns Yappable from a "read the final

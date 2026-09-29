@@ -87,6 +87,18 @@ Under the hood: Yappable detects Lovable's completion sound at the network level
 
 The default path (native speech + on-device summary) needs **no account and no API key**. ElevenLabs is entirely optional.
 
+### Quality checks
+
+Run the dependency-free QA suite before loading or publishing a change:
+
+```sh
+npm run qa
+```
+
+It checks JavaScript syntax, manifest references, release metadata, the narration
+pipeline, risk detection, background initialization, popup configuration loading,
+speech shaping, and completion-sound interception.
+
 ---
 
 ## Privacy
