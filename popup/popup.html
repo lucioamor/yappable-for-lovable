@@ -224,6 +224,7 @@
     .keystatus { display: flex; align-items: center; gap: 6px; }
     .keystatus .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); flex: none; }
     .keystatus .dot.ok { background: var(--ok-strong); }
+    .keystatus .dot.bad { background: var(--danger); }
     .keystatus .txt { font-size: 11px; color: var(--muted); white-space: nowrap; }
 
     /* affiliate links */
@@ -270,6 +271,8 @@
     .key-header h3 { margin: 0; flex: 1; }
     .privacy-note { background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 8px; padding: 8px 10px; font-size: 11px; color: var(--muted); line-height: 1.5; margin: 4px 0 8px; }
     .privacy-note strong { color: var(--txt-2); }
+    .diag-note { font-size: 11px; color: var(--muted); line-height: 1.5; margin: 4px 0 8px; }
+    .diag-note strong { color: var(--accent); font-weight: 700; }
     /* seed row: random checkbox + label + number input on one line */
     .seed-row { display: flex; align-items: center; gap: 8px; margin: 9px 0 0; }
     .seed-row input[type="checkbox"] { flex: none; accent-color: var(--accent); }
@@ -322,13 +325,13 @@
     <div class="soundline" title="Plays a short notification sound before narration.">
       <label for="cueEnabled">🔔 Ping first</label>
       <input type="range" id="cueVolume" class="minivol" min="0" max="1" step="0.05" title="Cue volume" />
-      <span class="rngval mini" id="cueVolumeOut">0.80</span>
+      <span class="rngval mini" id="cueVolumeOut">80%</span>
       <div class="switch"><input type="checkbox" id="cueEnabled" /></div>
     </div>
     <div class="soundline" title="Plays an attention chime when Lovable shows an error requiring a click on 'Try to fix'.">
       <label for="errorAlertEnabled">🚨 Error alert</label>
       <input type="range" id="errorVolume" class="minivol" min="0" max="1" step="0.05" title="Error alert volume" />
-      <span class="rngval mini" id="errorVolumeOut">0.40</span>
+      <span class="rngval mini" id="errorVolumeOut">40%</span>
       <div class="switch"><input type="checkbox" id="errorAlertEnabled" /></div>
     </div>
     <div class="soundline-solo" title="Show animated waveform bar at top of page while narrating.">
@@ -401,29 +404,25 @@
     <div class="field" title="Voice consistency. Low = expressive/variable; High = flat/predictable.">
       <label for="elevenStability">Stability</label>
       <input type="range" id="elevenStability" min="0" max="1" step="0.01" />
-      <span class="rngval" id="stabOut">0.20</span>
+      <span class="rngval" id="stabOut">20%</span>
     </div>
 
     <div class="field" title="How closely it mimics the original voice. High = more faithful to the cloned voice.">
       <label for="elevenSimilarity">Similarity</label>
       <input type="range" id="elevenSimilarity" min="0" max="1" step="0.01" />
-      <span class="rngval" id="simOut">0.20</span>
+      <span class="rngval" id="simOut">20%</span>
     </div>
 
     <div class="field" title="Style/emotion exaggeration (v2+). Higher = more dramatic, less stable.">
       <label for="elevenStyle">Style</label>
       <input type="range" id="elevenStyle" min="0" max="1" step="0.01" />
-      <span class="rngval" id="styleOut">0.50</span>
+      <span class="rngval" id="styleOut">50%</span>
     </div>
 
     <div class="field" title="Speech rate. 1.00 = normal; up to 3.00 for faster narration.">
       <label for="elevenSpeed">Speed</label>
       <input type="range" id="elevenSpeed" min="0.5" max="3" step="0.05" />
-      <span class="rngval" id="elevenSpeedOut">1.10</span>
-    </div>
-
-    <div class="inline" title="Reinforces similarity to the original voice and clarity, at a slight latency cost.">
-      <input type="checkbox" id="elevenSpeakerBoost" /> <label for="elevenSpeakerBoost">Speaker boost</label>
+      <span class="rngval" id="elevenSpeedOut">+10%</span>
     </div>
 
     <div class="btnrow">
@@ -505,6 +504,22 @@
         <input type="number" id="elevenSeed" min="0" max="4294967295" step="1" placeholder="—" />
       </div>
 
+      <!-- Diagnostics: structured logging of every operation/hook -->
+      <h3>Diagnostics</h3>
+      <div class="inline" title="Logs every operation (DOM read, interpretation, engine/connection, playback) to the page console and captures them for download. Off = zero overhead.">
+        <input type="checkbox" id="debug" />
+        <label for="debug">Debug logging</label>
+        <span class="keystatus" style="margin-left:auto"><span class="txt" id="logCount">—</span></span>
+      </div>
+      <div class="diag-note">
+        Records each hook with what was attempted, the result (ok / fallback / fail) and its parameters (secrets redacted). Mirrored to the page console with the <strong>[Yappable]</strong> tag.
+      </div>
+      <div class="btnrow">
+        <button class="act ghost" id="downloadLogs" title="Download the captured log from the active Lovable tab as a text file.">⬇ TXT</button>
+        <button class="act ghost" id="downloadLogsJsonl" title="Download structured log as JSONL with per-run metrics.">⬇ JSONL</button>
+        <button class="act ghost mini" id="clearLogs" title="Clear captured logs (this tab and stored copy).">🗑 Clear</button>
+      </div>
+
       <!-- Privacy note at the bottom -->
       <h3>Privacy</h3>
       <div class="privacy-note">
@@ -514,6 +529,7 @@
     </div>
   </div>
 
+  <script src="../src/logger.js"></script>
   <script src="../src/risk-detector.js"></script>
   <script src="../src/ir-builder.js"></script>
   <script src="../src/renderer.js"></script>

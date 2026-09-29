@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Yappable for Lovable - Every build, debriefed",
-  "version": "0.2.0",
-  "description": "Natural voice companion for Lovable that briefs you audibly on every prompt — what changed, why it matters, and what to do next.",
+  "name": "Yappable for Lovable: voice mode that reads chat & talks back",
+  "version": "1.0.0",
+  "description": "Lovable extension that talks back: reads every build aloud — what changed, why it matters, next steps. Hands-free voice updates.",
   "permissions": ["storage", "declarativeNetRequest"],
   "host_permissions": [
     "https://lovable.dev/*",
@@ -34,7 +34,7 @@
     },
     {
       "matches": ["https://lovable.dev/*"],
-      "js": ["src/risk-detector.js", "src/ir-builder.js", "src/renderer.js", "src/silence-monitor.js", "src/content.js"],
+      "js": ["src/logger.js", "src/tts-provider.js", "src/risk-detector.js", "src/ir-builder.js", "src/renderer.js", "src/silence-monitor.js", "src/content.js"],
       "run_at": "document_idle"
     },
     {
