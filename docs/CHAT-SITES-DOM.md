@@ -69,7 +69,7 @@ Timeline for the search prompt (times from the send click): stop button 0–3 s,
 text visible at ~11 s (the whole short reply arrived in one poll tick), message actions at ~12 s.
 
 **Implemented** in `chat-adapters.js`:
-1. `lastReply` = last `model-response`. `isBusy` = the stop button, or (6 s after load) no `message-actions` yet on the last reply. The grace period keeps a finished reply that is still rendering at page load from being read as new.
+1. `lastReply` = last `model-response`. `isBusy` = the stop button, or "no `message-actions` yet" but **only within 90 s of a stop button having been seen**. A history reply that renders its text before its action bar (page load, switching chats) never has a preceding stop button, so it is never read. (A fixed grace period after page load was not enough: it did not cover SPA navigation between conversations.)
 2. `textOf` = `message-content` minus `code-block`, `sources-list`, `message-actions` and the disclaimers.
 3. `readAloud` = click `⋯`, wait for the Material menu, click "Ouvir". It found the item after 100 ms.
 4. Manifest: `gemini.google.com` added to `host_permissions` and both content scripts. Its `media-src` was not checked, but the site's own audio played.
@@ -158,6 +158,13 @@ On ChatGPT the button lookup mapped 3 of 3 replies to their own buttons. Rate, s
 - **Modal (`src/player-ui.js`, shadow DOM):** Site/Yappable toggle, −15 / play-pause / +15 / stop, and speed 0.5–3× in 0.25 steps. The speed is persisted as `playerRate` and applies to every source.
 - **Shortcuts:** Alt+K (play/pause), Alt+J (−15 s), Alt+L (+15 s), Alt+, (slower), Alt+. (faster), Alt+0 (1×), Esc (stop while playing).
 - **System-voice limits:** seeking works at chunk granularity (~220 chars), because speech has no timeline. The position also only moves per chunk when the voice emits no boundary events, as Google voices don't.
+
+## Review fixes (PR #6)
+
+- **Read-aloud controls look like stop buttons.** While the site reads a reply, its button becomes "Parar leitura em voz alta" / "Stop reading aloud" (ChatGPT) or a bare "Parar" (Grok). The ChatGPT busy predicate now excludes reading labels, and `watch()` additionally requires the last reply to differ (key or text) from what was on screen before the busy phase, so replaying an old reply is never read a second time.
+- **Web Audio capture is scoped to Claude's TTS.** Short `AudioBuffer`s were captured on every host. Now they are captured only while a `text_to_speech/text_stream` socket is open (registered when its first frame is sent, which precedes the audio) plus 3 s of grace. Verified: a 100 ms tone with no TTS socket is left alone, and a real Claude read is still captured, played and seekable.
+- **A second site audio element pauses the first.** `adopt()` used to swap the controlled element without pausing the old one (two replies at once, the first unreachable). It now pauses the old one, unless the newcomer is shorter than 2 s (a UI sound), which cannot steal the controls.
+- **Turning narration off stops every source** (`YapPlayer.stopAll()`), including the site's own voice, not only the extension's.
 
 ## Pitfalls found
 

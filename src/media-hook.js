@@ -81,8 +81,29 @@
   }
 
   const EVENTS = ["play", "pause", "ratechange", "timeupdate", "ended", "durationchange", "seeked"];
+  // A new site audio element takes over the controls, and the previous one is
+  // paused so two replies never play at once (the old one would be unreachable).
+  // Exception: if the old element is still playing, wait a moment and only take
+  // over when the newcomer is not a short UI sound (< 2 s), so a notification
+  // ding cannot pause the narration.
   function adopt(el) {
     if (target === el) return;
+    const old = target;
+    const ours = el.dataset && el.dataset.yapOwn;
+    if (old && !old.paused && !old.ended && !ours) {
+      setTimeout(() => {
+        if (target === el || el.paused || el.ended) return;
+        if (Number.isFinite(el.duration) && el.duration < 2) return;
+        takeOver(el, old);
+      }, 300);
+      return;
+    }
+    takeOver(el, old);
+  }
+
+  function takeOver(el, old) {
+    if (target === el) return;
+    if (old && old !== el) { try { old.pause(); } catch (_) {} }
     if (target) EVENTS.forEach((e) => target.removeEventListener(e, emit));
     target = el;
     userStopped = false;
@@ -185,10 +206,28 @@
     emit();
   }
 
+  // Only audio that belongs to Claude's text-to-speech socket is captured. Short
+  // AudioBuffers from anything else (notification tones, other sites) are left alone.
+  // A socket is registered when the site sends its first TTS frame (which always
+  // precedes the audio) and forgotten on close, with 3 s of grace for chunks still
+  // being scheduled.
+  const ttsSockets = new Set();
+  let lastTtsAt = 0;
+  const ttsStreamLive = () => {
+    for (const s of ttsSockets) if (s.readyState <= 1) return true;
+    return Date.now() - lastTtsAt < 3000;
+  };
+  function noteTtsSocket(ws) {
+    lastTtsAt = Date.now();
+    if (ttsSockets.has(ws)) return;
+    ttsSockets.add(ws);
+    ws.addEventListener("close", () => { ttsSockets.delete(ws); lastTtsAt = Date.now(); });
+  }
+
   AudioBufferSourceNode.prototype.start = function (when, ...rest) {
     const buf = this.buffer;
     const ctx = this.context;
-    if (buf && buf.duration <= CAPTURE_MAX_CHUNK_S && ctx instanceof AudioContext) {
+    if (buf && buf.duration <= CAPTURE_MAX_CHUNK_S && ctx instanceof AudioContext && ttsStreamLive()) {
       try {
         // After a user stop, the rest of that stream stays muted and uncaptured.
         if (!stoppedCtx.has(ctx)) pushChunk(buf, ctx);
@@ -257,6 +296,7 @@
   const origWsSend = WebSocket.prototype.send;
   WebSocket.prototype.send = function (data) {
     if (typeof data === "string" && /text_to_speech\/text_stream/.test(this.url || "")) {
+      try { noteTtsSocket(this); } catch (_) {}
       try {
         const m = JSON.parse(data);
         if (m && m.type === "text_chunk" && typeof m.text === "string") {

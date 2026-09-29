@@ -226,9 +226,18 @@
   // Own sources don't push events; poll while something plays.
   setInterval(() => { if (curState().active || (host && !ui.live.hidden)) render(); }, 250);
 
+  // Stop whatever is playing, whichever source it is (used when narration is turned off).
+  const stopAll = () => {
+    for (const s of sources.values()) {
+      try { if (s.state().active) s.stop(); } catch (_) {}
+    }
+    render();
+  };
+
   globalThis.YapPlayer = {
     register,
     activate,
+    stopAll,
     rate: () => rate,
     setMode: (m) => { mode = m; render(); },
     onModeChange: (fn) => { onModeChange = fn; },

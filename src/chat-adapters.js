@@ -61,7 +61,16 @@
   const claudeIds = new WeakMap();
   let claudeSeq = 0;
 
-  const CHATGPT_STOP = '[data-testid="stop-button"], button[aria-label*="Parar"], button[aria-label*="Stop"]';
+  // The generation stop button. The site's read-aloud button turns into "Parar leitura em
+  // voz alta" / "Stop reading aloud" while it plays, so those labels must not count.
+  const READING_LABEL = /(leitura|lectura|lecture|lesen|leggi|reading|read|aloud|voz|voice|ler\b)/i;
+  const chatgptBusyButton = () => {
+    if (document.querySelector('[data-testid="stop-button"]')) return true;
+    return [...document.querySelectorAll("button[aria-label]")].some((b) => {
+      const l = b.getAttribute("aria-label");
+      return /^(parar|stop)\b/i.test(l) && !READING_LABEL.test(l);
+    });
+  };
 
   const last = (list) => list[list.length - 1] || null;
   const READ_ALOUD_LABEL =
@@ -70,7 +79,9 @@
   const GEMINI_LISTEN = /^(ouvir|listen|escuchar|écouter|anhören|ascolta|luisteren)$/i;
   const GEMINI_MORE = /^(mostrar mais opções|show more options|mostrar más opciones|afficher plus d'options|weitere optionen anzeigen)$/i;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const geminiLoadedAt = Date.now();
+  const GEMINI_STOP = /^(parar resposta|stop response|detener respuesta|arrêter la réponse|antwort stoppen)$/i;
+  const GEMINI_BUSY_TAIL_MS = 90000; // how long after the stop button "no message-actions yet" still means generating
+  let geminiLastStopAt = 0;
 
   // The generation stop button is labelled "Parar a resposta do modelo" at first and a bare
   // "Parar"/"Stop" at other moments (the bare one is also up while audio plays; harmless,
@@ -119,11 +130,15 @@
       match: (h) => h === "gemini.google.com",
       lastReply: () => last(document.querySelectorAll("model-response")),
       // The stop button only lasts a few seconds and the web-search phase after
-      // it has no indicator, so also count "no message-actions yet" as busy —
-      // but not right after load, when a finished reply may still be rendering.
+      // it has no indicator. So "no message-actions yet" counts as busy only within
+      // 90 s of a stop button actually being seen; a history reply that merely
+      // renders its text before its action bar (page load, switching chats) never
+      // has a preceding stop button, so it is never read.
       isBusy: () => {
-        if (document.querySelector('button[aria-label="Parar resposta"], button[aria-label="Stop response"]')) return true;
-        if (Date.now() - geminiLoadedAt < 6000) return false;
+        const stop = [...document.querySelectorAll("button[aria-label]")]
+          .some((b) => GEMINI_STOP.test(b.getAttribute("aria-label")));
+        if (stop) { geminiLastStopAt = Date.now(); return true; }
+        if (Date.now() - geminiLastStopAt > GEMINI_BUSY_TAIL_MS) return false;
         const mr = last(document.querySelectorAll("model-response"));
         return !!mr && !mr.querySelector("message-actions");
       },
@@ -206,7 +221,7 @@
       lastReply: () => last(document.querySelectorAll('[data-markdown-text-style="assistant-message"]')),
       // Stop button spans the whole generation, including the web-search phase
       // where no reply element exists yet.
-      isBusy: () => !!document.querySelector(CHATGPT_STOP + ", [data-markdown-animated]"),
+      isBusy: () => chatgptBusyButton() || !!document.querySelector("[data-markdown-animated]"),
       textOf: extractText,
       // Message id is only assigned AFTER streaming ends; fine, we key at the end.
       keyOf: (el) => {
@@ -238,9 +253,14 @@
     // Generation cycle: idle -> busy (seen) -> idle + settled -> read LAST reply.
     // Only a busy phase observed by this watcher arms a read, so history and
     // re-rendered old replies are never spoken.
+    // "Busy" can be a false alarm: some buttons look like a stop control while the
+    // user plays an OLD reply through the site's read-aloud. So a read also needs
+    // the last reply to differ (element/key or text) from what was on screen
+    // before the busy phase began; an unchanged reply was never generated now.
     let armed = false;
     let lastText = "";
     let changedAt = 0;
+    let baseline = null; // { key, text } of the last reply while idle
     const spoken = new Set();
     let timer = null;
 
@@ -251,9 +271,11 @@
       const text = el ? adapter.textOf(el) : "";
       if (text !== lastText) { lastText = text; changedAt = now; }
       if (adapter.isBusy()) { armed = true; return; }
-      if (!armed || !el || !text) return;
+      if (!armed) { baseline = { key: (el && adapter.keyOf(el)) || "", text }; return; }
+      if (!el || !text) return;
       if (now - changedAt < adapter.settleMs) return;
       armed = false;
+      if (baseline && baseline.text === text && baseline.key === (adapter.keyOf(el) || "")) return;
       const key = adapter.keyOf(el) || text;
       if (spoken.has(key)) return;
       spoken.add(key);

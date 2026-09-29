@@ -106,7 +106,8 @@
     }
     if (changes.chatVoiceMode) Player.setMode(cfg.chatVoiceMode);
     if (changes.lang || changes.chatAnnounce) syncPrefix();
-    if (!active()) own.stop();
+    // Turning narration off must silence every source, including the site's own voice.
+    if (!active()) Player.stopAll();
   });
   Player.onModeChange((m) => {
     cfg.chatVoiceMode = m;
