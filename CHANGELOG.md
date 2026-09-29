@@ -8,6 +8,26 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and
 
 ## [Unreleased]
 
+### Added
+- Chat narration on claude.ai and chatgpt.com (`src/chat-adapters.js`, `src/chat-narrator.js`):
+  reads each finished assistant reply aloud (code blocks and citation chips stripped).
+  Full reply is always spoken (no length cap). Sync keys `chatNarration` (default on) and
+  `chatVoiceMode`: "site" clicks the site's own read-aloud, "yappable" runs the on-device
+  interpretation layer + ElevenLabs (or system voice).
+- Gemini support (gemini.google.com): reply detection and the native "Ouvir" voice.
+- Grok support (grok.com): reply detection (its stop button ends before the answer starts, so the
+  end is detected by the text settling) and the native "Ler em voz alta". Grok's audio stream is
+  not seekable, so the player greys out −15/+15 whenever the element reports no seekable range.
+- Spoken prefix before every chat reply ("Resposta do Claude:", "Resposta do Gemini:", localized;
+  sync key `chatAnnounce`, default on). On Claude and Gemini `media-hook.js` rewrites the text
+  the site sends to its own TTS, so the site's voice also reads the on-device summary when
+  `mode` isn't `completo`. ChatGPT sends no text to its TTS, so Site mode reads it unchanged.
+- Universal player modal (`src/player-ui.js`) with play/pause, ±15 s, speed 0.5–3×
+  (remembered as `playerRate`) and shortcuts Alt+K / Alt+J / Alt+L / Alt+, / Alt+. / Alt+0 / Esc.
+- `src/media-hook.js` (MAIN world) makes the sites' native TTS controllable: adopts
+  ChatGPT's `<audio>`, captures Claude's Web Audio stream into a seekable WAV player.
+  DOM and audio notes in `docs/CHAT-SITES-DOM.md`.
+
 ### Fixed
 
 - Prevented an ElevenLabs API key from being lost during migration from synced
