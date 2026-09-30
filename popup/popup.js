@@ -1,15 +1,6 @@
 const DEFAULTS = {
   enabled: true,
   lovableEnabled: true,
-  chatgptEnabled: true,
-  claudeEnabled: true,
-  geminiEnabled: true,
-  grokEnabled: true,
-  chatAnnouncementStyle: "concise",
-  chatgptVoiceId: "",
-  claudeVoiceId: "",
-  geminiVoiceId: "",
-  grokVoiceId: "",
   engine: "native", // "native" | "elevenlabs"
   lang: "auto", // "auto" = detect from browser, fallback en-US (resolved by resolveLang)
   rate: 1.05,
@@ -96,14 +87,7 @@ const VOICE_CACHE_KEY = "elevenVoicesCache"; // chrome.storage.local: { key, at,
 const LAST_OUTPUT_KEY = "lovableNarratorLastOutput";
 const REQUEST_TIMEOUT_MS = 15000;
 const MAX_DELAY_MS = 3000;
-const PLATFORM_URLS = {
-  lovableEnabled: ["https://lovable.dev/*"],
-  chatgptEnabled: ["https://chatgpt.com/*", "https://chat.openai.com/*"],
-  claudeEnabled: ["https://claude.ai/*"],
-  geminiEnabled: ["https://gemini.google.com/*"],
-  grokEnabled: ["https://grok.com/*"]
-};
-const PLATFORM_VOICE_KEYS = ["chatgptVoiceId", "claudeVoiceId", "geminiVoiceId", "grokVoiceId"];
+const LOVABLE_URLS = ["https://lovable.dev/*"];
 const MODES = ["fast", "beginner", "advanced", "completo"];
 const LEGACY_TO_MODE = {
   raw: "completo", full: "completo", technical: "completo",
@@ -209,7 +193,7 @@ function reflectEnabledState() {
   document.body.classList.toggle("narr-off", !on);
 }
 
-function stopTabs(urls = Object.values(PLATFORM_URLS).flat()) {
+function stopTabs(urls = LOVABLE_URLS) {
   if (!chrome.tabs?.query) return;
   chrome.tabs.query({ url: urls }, (tabs) => {
     for (const tab of tabs || []) {
@@ -632,31 +616,17 @@ function loadTodayStats() {
     $("statsNarrations").textContent = Math.round(day.narrations || 0).toLocaleString();
   });
 }
-function showTab(name) {
-  const platforms = name === "platforms";
-  $("viewMain").hidden = platforms;
-  $("viewPlatforms").hidden = !platforms;
-  for (const [id, on] of [["tabMain", !platforms], ["tabPlatforms", platforms]]) {
-    $(id).classList.toggle("on", on);
-    $(id).setAttribute("aria-selected", String(on));
-  }
-  if (platforms) loadTodayStats();
-  try { sessionStorage.setItem("yapTab", name); } catch (_) {}
-}
-$("tabMain").addEventListener("click", () => showTab("main"));
-$("tabPlatforms").addEventListener("click", () => showTab("platforms"));
-try { if (sessionStorage.getItem("yapTab") === "platforms") showTab("platforms"); } catch (_) {}
-
 // Stop button: grey when idle, red only while a Yappable tab is making sound.
 function refreshStopState() {
   if (!chrome.tabs?.query) return;
-  chrome.tabs.query({ url: Object.values(PLATFORM_URLS).flat(), audible: true }, (tabs) => {
+  chrome.tabs.query({ url: LOVABLE_URLS, audible: true }, (tabs) => {
     void chrome.runtime.lastError;
     const live = Array.isArray(tabs) && tabs.length > 0;
     $("stopBtn").classList.toggle("live", live);
-    $("stopBtn").title = live ? "Stop audio on every Yappable platform" : "Nothing playing";
+    $("stopBtn").title = live ? "Stop audio" : "Nothing playing";
   });
 }
+loadTodayStats();
 refreshStopState();
 setInterval(refreshStopState, 700);
 if (chrome.tabs?.onUpdated) chrome.tabs.onUpdated.addListener((_id, change) => { if ("audible" in change) refreshStopState(); });
@@ -790,24 +760,6 @@ function populateElevenVoices(voices) {
   }
   if (cfg.elevenVoiceId) sel.value = cfg.elevenVoiceId;
   if (!sel.value && sel.options.length) { sel.value = sel.options[0].value; set("elevenVoiceId", sel.value); }
-
-  for (const key of PLATFORM_VOICE_KEYS) {
-    const platform = $(key);
-    platform.replaceChildren();
-    const fallback = document.createElement("option");
-    fallback.value = "";
-    fallback.textContent = "Use default ElevenLabs voice";
-    platform.appendChild(fallback);
-    for (const voice of voices) {
-      const option = document.createElement("option");
-      option.value = voice.id;
-      option.textContent = voice.lang ? `${voice.name} — ${voice.lang}` : voice.name;
-      platform.appendChild(option);
-    }
-    const valid = voices.some((voice) => voice.id === cfg[key]);
-    platform.value = valid ? cfg[key] : "";
-    if (cfg[key] && !valid) set(key, "");
-  }
 }
 
 async function fetchElevenVoices() {
@@ -912,8 +864,6 @@ function reflectUI() {
   $("errorVolume").value = cfg.errorVolume; $("errorVolumeOut").textContent = fmtPct(cfg.errorVolume);
   $("verboseEnabled").checked = cfg.verboseEnabled;
   $("waveformEnabled").checked = cfg.waveformEnabled;
-  for (const key of Object.keys(PLATFORM_URLS)) $(key).checked = cfg[key] !== false;
-  $("chatAnnouncementStyle").value = cfg.chatAnnouncementStyle;
   $("delayMs").value = cfg.delayMs; $("delayMsOut").textContent = fmt(cfg.delayMs, 0);
 
   // nativa
@@ -1074,17 +1024,9 @@ bindToggle("cueEnabled");
 bindToggle("errorAlertEnabled");
 bindToggle("verboseEnabled");
 bindToggle("waveformEnabled");
-for (const key of Object.keys(PLATFORM_URLS)) {
-  bindToggle(key);
-  $(key).addEventListener("change", () => {
-    if (!$(key).checked) stopTabs(PLATFORM_URLS[key]);
-  });
-}
 bindToggle("elevenSeedRandom");
 bindSelect("nativeVoice");
 bindSelect("elevenVoiceId");
-bindSelect("chatAnnouncementStyle");
-for (const key of PLATFORM_VOICE_KEYS) bindSelect(key);
 bindSelect("elevenModel");
 bindSelect("elevenOutputFormat");
 bindSelect("elevenTextNormalization");

@@ -288,8 +288,7 @@
     .tab { flex: 1; min-height: 26px; padding: 4px 8px; border: 0; background: transparent; color: var(--muted); font-size: 12px; }
     .tab:hover { background: transparent; color: var(--txt-2); }
     .tab.on { background: var(--surface-2); color: var(--accent); box-shadow: 0 0 0 1px var(--border); }
-    #viewMain[hidden], #viewPlatforms[hidden] { display: none; }
-    .platform-list { display: grid; gap: 4px; }
+        .platform-list { display: grid; gap: 4px; }
     .platform-row { display: grid; grid-template-columns: 20px 62px 1fr auto; align-items: center; gap: 8px; padding: 5px 8px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface); }
     .platform-row img { width: 18px; height: 18px; object-fit: contain; border-radius: 5px; }
     .platform-row strong { color: var(--txt); font-size: 12px; }
@@ -298,7 +297,7 @@
     .platform-announcement label { margin: 0; color: var(--txt-2); font-size: 12px; font-weight: 600; }
     .platform-announcement select { width: 100%; min-width: 0; padding: 4px 22px 4px 7px; font-size: 11px; }
     .platform-note { margin: 8px 0 0; color: var(--muted-2); font-size: 10.5px; line-height: 1.4; }
-    .stats-line { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; padding: 6px 9px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface); font-size: 11px; color: var(--muted-2); }
+    .stats-line { margin-top: 12px; display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; padding: 6px 9px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface); font-size: 11px; color: var(--muted-2); }
     .stats-line b { color: var(--val); font-variant-numeric: tabular-nums; }
     .stats-line em { margin-left: auto; font-style: normal; text-transform: uppercase; letter-spacing: .06em; font-size: 10px; }
   </style>
@@ -307,11 +306,11 @@
   <div class="topbar">
     <div class="header-brand">
       <h1 id="brandTitle">Yappable</h1>
-      <span class="status-line">Voice for Lovable &amp; AI chats</span>
+      <span class="status-line">Voice for Lovable</span>
     </div>
     <div class="header-actions">
       <button class="icon-btn repeat-btn narr-section" id="repeatBtn" title="Repeat last narration.">↩</button>
-      <button class="icon-btn stop-btn" id="stopBtn" title="Stop audio on every Yappable platform" aria-label="Stop audio">■</button>
+      <button class="icon-btn stop-btn" id="stopBtn" title="Stop audio" aria-label="Stop audio">■</button>
       <div class="dropdown narr-section" id="langDrop" title="Narration language (native voice and ElevenLabs).">
         <button type="button" class="lang-pill" id="langBtn" aria-label="Narration language"></button>
         <div class="dd-list" id="langList" hidden></div>
@@ -320,12 +319,7 @@
     </div>
   </div>
 
-  <nav class="tabs" role="tablist" aria-label="Yappable sections">
-    <button type="button" class="tab on" id="tabMain" role="tab" aria-selected="true" aria-controls="viewMain">Narration</button>
-    <button type="button" class="tab" id="tabPlatforms" role="tab" aria-selected="false" aria-controls="viewPlatforms">Platforms</button>
-  </nav>
-
-  <div id="viewMain" role="tabpanel" aria-labelledby="tabMain">
+  <div id="viewMain">
   <!-- hero: on/off + verbose (whole-session actions) -->
   <div class="control hero" id="masterCard">
     <div class="master" title="Enable or disable narration. Turning off stops any ongoing speech immediately.">
@@ -478,27 +472,14 @@
   </details>
   </div><!-- /viewMain -->
 
-  <!-- PLATFORMS TAB -->
-  <div id="viewPlatforms" role="tabpanel" aria-labelledby="tabPlatforms" hidden>
-    <div class="stats-line" aria-label="Today's narration statistics">
-      <span><b id="statsWords">0</b> words</span><span><b id="statsMinutes">0</b> min</span><span><b id="statsNarrations">0</b> narrations</span><em>today</em>
-    </div>
-    <div class="platform-announcement">
-      <label for="chatAnnouncementStyle">Intro</label>
-      <select id="chatAnnouncementStyle" title="How each LLM introduces its reply">
-        <option value="concise">Concise — “Resposta do Gemini”</option>
-        <option value="casual">Casual — “Oi, agora é o Gemini falando”</option>
-      </select>
-    </div>
-    <div class="platform-list">
-      <div class="platform-row"><img src="../assets/platforms/lovable.ico" alt=""><strong>Lovable</strong><span class="pvoice"></span><div class="switch"><input type="checkbox" id="lovableEnabled" aria-label="Enable Lovable"></div></div>
-      <div class="platform-row"><img src="../assets/platforms/chatgpt.png" alt=""><strong>ChatGPT</strong><select id="chatgptVoiceId" class="pvoice" aria-label="ElevenLabs voice for ChatGPT"></select><div class="switch"><input type="checkbox" id="chatgptEnabled" aria-label="Enable ChatGPT"></div></div>
-      <div class="platform-row"><img src="../assets/platforms/claude.png" alt=""><strong>Claude</strong><select id="claudeVoiceId" class="pvoice" aria-label="ElevenLabs voice for Claude"></select><div class="switch"><input type="checkbox" id="claudeEnabled" aria-label="Enable Claude"></div></div>
-      <div class="platform-row"><img src="../assets/platforms/gemini.png" alt=""><strong>Gemini</strong><select id="geminiVoiceId" class="pvoice" aria-label="ElevenLabs voice for Gemini"></select><div class="switch"><input type="checkbox" id="geminiEnabled" aria-label="Enable Gemini"></div></div>
-      <div class="platform-row"><img src="../assets/platforms/grok.png" alt=""><strong>Grok</strong><select id="grokVoiceId" class="pvoice" aria-label="ElevenLabs voice for Grok"></select><div class="switch"><input type="checkbox" id="grokEnabled" aria-label="Enable Grok"></div></div>
-    </div>
-    <p class="platform-note">Voices apply in ElevenLabs mode; “Site” keeps each LLM's own voice. Replies play in completion order across tabs, never overlapping.</p>
+  <div class="stats-line" aria-label="Today's narration statistics">
+    <span><b id="statsWords">0</b> words</span><span><b id="statsMinutes">0</b> min</span><span><b id="statsNarrations">0</b> narrations</span><em>today</em>
   </div>
+
+  <!-- Cross-promo: stays hidden until the Yappable for your AI store URL exists (then set href and remove hidden). -->
+  <a id="crossPromo" class="affiliate" href="#" target="_blank" rel="noopener noreferrer" hidden>
+    Also reads <strong>ChatGPT, Claude, Gemini &amp; Grok</strong> → Yappable for your AI
+  </a>
 
   <div id="msg"></div>
 

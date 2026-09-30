@@ -45,10 +45,9 @@ Reading is a commodity. Knowing *what's happening right now and where to look* i
 - **Silence monitoring** — speaks up if Lovable stalls mid-task, with elapsed time and task label
 - **Error alert** — distinct chime when Lovable surfaces a "Try to fix" error that needs your click
 - **Animated waveform bar** — optional visual feedback at the top of the page while narrating (toggle in popup)
-- **Cross-tab audio queue** — ChatGPT, Claude, Gemini, and Grok replies play in completion order without overlapping
 - **Multi-tab awareness** — prefixes the project name when you've got more than one Lovable tab open
 - **100% local by default** — all processing runs in the browser; ElevenLabs is optional
-- **Scoped permissions** — activates only on Lovable and the four explicitly supported LLM sites
+- **Scoped permissions** — activates only on Lovable (plus ElevenLabs when you add a key)
 
 ---
 
@@ -102,19 +101,10 @@ speech shaping, and completion-sound interception.
 
 ---
 
-## Chat narration (ChatGPT, Claude, Gemini, Grok)
+## Looking for ChatGPT, Claude, Gemini or Grok?
 
-Yappable also reads the finished reply on **chatgpt.com, claude.ai, gemini.google.com and grok.com**, with the same floating player.
-
-- **Two voices.** *Site*: Yappable presses the site's own "read aloud" for free. *Yappable*: an on-device summary (same modes as Lovable) spoken by ElevenLabs or your system voice. Switch from the player.
-- **Every reply identifies its LLM.** ChatGPT, Claude, Gemini, and Grok always introduce themselves before the answer. Choose a concise or casual localized introduction in Platforms.
-- **One ordered queue across tabs.** Simultaneous replies play in FIFO completion order without overlap. ElevenLabs can generate the MP3 while a prior reply is playing.
-- **A voice per LLM.** In Yappable + ElevenLabs mode, each of the four LLMs can use its own voice or inherit the global voice. In Site mode, the answer keeps the site's original voice.
-- **Waveform on every LLM.** The full-width top activity bar and floating player appear on each supported chat page while its audio is active.
-- **Player.** Play/pause, −15 s / +15 s (where the site's audio can seek) and speed from 0.5× to 3×. Shortcuts: `Alt+K` play/pause, `Alt+J` / `Alt+L` −15 / +15 s, `Alt+,` / `Alt+.` slower / faster, `Alt+0` reset, `Esc` stop.
-- **Per-site details** (DOM signals, how each site's text-to-speech works) are in [docs/CHAT-SITES-DOM.md](docs/CHAT-SITES-DOM.md).
-
-Chat narration needs Chrome to grant access to those four sites when you install or update.
+Reading those chats aloud is a separate extension,
+[Yappable for your AI](https://github.com/lucioamor/yappable-for-your-ai), so this one only needs access to Lovable.
 
 ---
 
@@ -122,7 +112,7 @@ Chat narration needs Chrome to grant access to those four sites when you install
 
 All processing is local by default. Native speech and on-device AI summaries run entirely in the browser — Lovable response text never leaves your machine in this path.
 
-On the chat sites, "Site" voice uses that site's own read-aloud (the site already has your reply), and Yappable only reads the assistant's latest reply. If you add an ElevenLabs API key, only the final narration text is sent to ElevenLabs to generate audio. Your key is stored in `chrome.storage.local` and is never synced across devices or sent anywhere else.
+If you add an ElevenLabs API key, only the final narration text is sent to ElevenLabs to generate audio. Your key is stored in `chrome.storage.local` and is never synced across devices or sent anywhere else.
 
 Full privacy policy: [docs/privacy-policy.md](docs/privacy-policy.md)
 
@@ -145,11 +135,8 @@ yappable/
 │   ├── content.js          # Observer, gate, extraction, TTS, queue
 │   ├── inject.js           # MAIN world — intercepts fetch, emits completion signal
 │   ├── logger.js           # Structured debug logging
-│   ├── tts-provider.js     # ElevenLabs key verification and quota
-│   ├── chat-adapters.js    # ChatGPT / Claude / Gemini / Grok reply detection
-│   ├── chat-narrator.js    # Chat replies → site voice or Yappable voice
-│   ├── media-hook.js       # MAIN world — controls the sites' own TTS audio
-│   ├── player-ui.js        # Floating player + keyboard shortcuts
+│   ├── tts-provider.js     # ElevenLabs key verification and quota (shared with yappable-for-your-ai)
+│   ├── stats.js            # Local daily counters (shared with yappable-for-your-ai)
 │   ├── ir-builder.js       # Builds Intermediate Representation from agent output
 │   ├── renderer.js         # Renders IR → speakable text per narration mode
 │   ├── risk-detector.js    # Flags unvalidated metrics, copy, build, SEO changes

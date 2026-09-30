@@ -8,89 +8,26 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and
 
 ## [1.3.0] — 2026-09-30
 
-### Fixed
-- Play/pause and the Alt+K shortcut in a chat tab's player now act only on that tab's own audio.
-  Pausing in Gemini no longer pauses Grok (and vice versa): the shared browser speech queue is
-  cancelled only while the tab itself is speaking.
-- The waveform beside the title (and the top bar) animates only while sound is really coming out.
-  A paused, buffering, dropped or finished site audio element freezes it or hides it, instead of
-  leaving it moving on its own.
-
 ### Changed
-- The Platforms panel is now an inline tab next to Narration instead of a modal, with one compact
-  row per platform (icon, voice, switch) and a one-line daily-stats strip.
-- The Stop button stays grey while nothing plays and turns red only while a Yappable tab is making sound.
-- Store short description and manifest description now cover Lovable, ChatGPT, Claude, Gemini and Grok.
-- One voice at a time across tabs. Whoever starts playing (a queued reply, or the user's click on the
-  site's own read-aloud button) pauses, never stops, the other tabs, which can be resumed from their
-  own player. A paused reading keeps its turn for up to 10 minutes, so an automatic reply from another
-  LLM waits instead of replacing it.
-
-### Added
-- The player shows what plays in other tabs and the queue ("Up next: Gemini · Claude"). With nothing
-  playing in the tab, play (or Alt+K) starts the next queued reading; if a queued reading is paused,
-  it resumes it.
-
----
-
-## [1.2.0] — 2026-09-29
-
-### Added
-- Every ChatGPT, Claude, Gemini, and Grok narration now starts by identifying the LLM. The
-  Platforms panel offers concise and casual introductions, localized to the narration language.
-- A deterministic cross-tab FIFO coordinates automatic chat narration. Replies play in completion
-  order and never overlap; ElevenLabs audio can be generated while waiting for its turn.
-- Optional ElevenLabs voice selection per LLM, with the global ElevenLabs voice as fallback.
-- Chat pages now show the same full-width top waveform feedback used by Lovable, in addition to the
-  floating player's compact activity indicator.
-
-### Changed
-- In Site mode, Claude and Gemini inject the introduction into the site's original TTS request.
-  ChatGPT and Grok do not expose text in their TTS requests, so Yappable speaks the introduction
-  first and then starts the site's original voice.
-- The coordinator uses Chrome's audible-tab signal only as restart recovery; normal ordering is the
-  explicit FIFO rather than random retry delays.
-
----
-
-## [1.1.0] — 2026-09-29
+- Yappable for Lovable is Lovable-only again. Reading ChatGPT, Claude, Gemini and Grok replies moved
+  to its own extension, **Yappable for your AI**, so this one asks for no chat-site access. Permissions
+  are now `lovable.dev` and `api.elevenlabs.io`.
+- The daily statistics strip (words, minutes, narrations) now sits on the main popup screen.
+- The Stop button stays grey while nothing plays and turns red only while a Lovable tab is making sound.
+- Store and manifest descriptions cover Lovable only.
 
 ### Fixed
-- ElevenLabs setup now saves the API key before remote verification, uses the current v2 voices
-  endpoint, and selects a voice actually available to the account instead of assuming a legacy
-  default voice ID.
-- The settings panel now has an explicit **Save & verify key** action, so saving no longer depends
-  on the password field losing focus.
+- ElevenLabs setup saves the API key before remote verification, uses the current v2 voices endpoint,
+  and selects a voice actually available to the account instead of assuming a legacy default voice ID.
+- The settings panel has an explicit **Save & verify key** action, so saving no longer depends on the
+  password field losing focus.
 - Flash v2.5 no longer forces the Enterprise-only text-normalization mode, preventing HTTP 400
   followed by an unnoticed fallback to the browser's native voice.
 
 ### Added
-- A Platforms tab in the popup adds individual on/off controls with local favicons for Lovable,
-  ChatGPT, Claude, Gemini, and Grok. Disabling one platform stops its active audio immediately.
-- A global Stop button silences native, ElevenLabs, and site-provided audio across supported tabs.
-- Chat pages now show the waveform indicator while audio is active.
-- Local daily narration statistics retain words, estimated minutes, narration count, and per-platform
-  totals for future weekly, monthly, and yearly summaries.
-- Eleven v4, v4 Turbo, and v3 Conversational are available in model selection; deprecated Turbo v2.5
+- Eleven v4, v4 Turbo and v3 Conversational are available in model selection; deprecated Turbo v2.5
   was removed, and expressive v3/v4 models use audio-tag-safe shaping.
-- Chat narration on claude.ai and chatgpt.com (`src/chat-adapters.js`, `src/chat-narrator.js`):
-  reads each finished assistant reply aloud (code blocks and citation chips stripped).
-  Full reply is always spoken (no length cap). Sync keys `chatNarration` (default on) and
-  `chatVoiceMode`: "site" clicks the site's own read-aloud, "yappable" runs the on-device
-  interpretation layer + ElevenLabs (or system voice).
-- Gemini support (gemini.google.com): reply detection and the native "Ouvir" voice.
-- Grok support (grok.com): reply detection (its stop button ends before the answer starts, so the
-  end is detected by the text settling) and the native "Ler em voz alta". Grok's audio stream is
-  not seekable, so the player greys out −15/+15 whenever the element reports no seekable range.
-- Spoken prefix before every chat reply ("Resposta do Claude:", "Resposta do Gemini:", localized;
-  sync key `chatAnnounce`, default on). On Claude and Gemini `media-hook.js` rewrites the text
-  the site sends to its own TTS, so the site's voice also reads the on-device summary when
-  `mode` isn't `completo`. ChatGPT sends no text to its TTS, so Site mode reads it unchanged.
-- Universal player modal (`src/player-ui.js`) with play/pause, ±15 s, speed 0.5–3×
-  (remembered as `playerRate`) and shortcuts Alt+K / Alt+J / Alt+L / Alt+, / Alt+. / Alt+0 / Esc.
-- `src/media-hook.js` (MAIN world) makes the sites' native TTS controllable: adopts
-  ChatGPT's `<audio>`, captures Claude's Web Audio stream into a seekable WAV player.
-  DOM and audio notes in `docs/CHAT-SITES-DOM.md`.
+- Local daily narration statistics (words, estimated minutes, narration count).
 
 ---
 

@@ -31,6 +31,16 @@ test("manifest is internally consistent", () => {
   }
 });
 
+test("manifest is scoped to Lovable and ElevenLabs only, with no chat-site leftovers", () => {
+  const hosts = manifest.host_permissions.map((h) => h.replace(/^https:\/\/|\/\*$/g, "")).sort();
+  assert.deepEqual(hosts, ["api.elevenlabs.io", "lovable.dev"]);
+  for (const entry of manifest.content_scripts) assert.deepEqual(entry.matches, ["https://lovable.dev/*"]);
+  assert.doesNotMatch(JSON.stringify(manifest), /chatgpt|claude\.ai|gemini|grok/i);
+  for (const gone of ["chat-adapters", "chat-narrator", "player-ui", "media-hook"]) {
+    assert.ok(!fs.existsSync(path.join(root, "src", `${gone}.js`)), `${gone}.js should live in yappable-for-your-ai`);
+  }
+});
+
 test("changelog contains the manifest release", () => {
   const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
   assert.match(changelog, new RegExp(`\\[${manifest.version.replaceAll(".", "\\.")}\\]`));
@@ -55,7 +65,7 @@ test("ElevenLabs verification uses the current voices endpoint and distinguishes
 });
 
 test("Flash v2.5 defaults to API-safe automatic text normalization", () => {
-  for (const relative of ["popup/popup.js", "src/content.js", "src/chat-narrator.js"]) {
+  for (const relative of ["popup/popup.js", "src/content.js"]) {
     const source = fs.readFileSync(path.join(root, relative), "utf8");
     assert.match(source, /elevenTextNormalization:\s*"auto"/, relative);
   }
@@ -237,189 +247,6 @@ test("background seeds defaults, opens onboarding once, and counts project tabs"
   assert.equal(response.count, 2);
 });
 
-// Loads background.js in a sandbox and returns fake ports that record what the
-// coordinator sends them. `granted(port)` filters YAP_AUDIO_GRANTED job ids.
-function loadCoordinator() {
-  let onConnect;
-  const context = {
-    Date,
-    clearTimeout,
-    setTimeout,
-    chrome: {
-      runtime: {
-        lastError: null,
-        onInstalled: { addListener() {} },
-        onMessage: { addListener() {} },
-        onConnect: { addListener: (fn) => { onConnect = fn; } }
-      },
-      storage: {
-        local: { get: (_defaults, cb) => cb({ auth: { v: 1 } }), set() {} },
-        sync: { get: (_defaults, cb) => cb({ elevenModel: "eleven_flash_v2_5" }), set() {} }
-      },
-      tabs: { query: (_query, cb) => cb([]) }
-    }
-  };
-  vm.createContext(context);
-  vm.runInContext(fs.readFileSync(path.join(root, "src", "background.js"), "utf8"), context);
-  const fakePort = () => {
-    let receive;
-    let disconnect;
-    return {
-      name: "yappable-chat-audio",
-      sent: [],
-      onMessage: { addListener: (fn) => { receive = fn; } },
-      onDisconnect: { addListener: (fn) => { disconnect = fn; } },
-      postMessage(message) { this.sent.push(message); },
-      emit(message) { receive(message); },
-      disconnect() { disconnect(); },
-      of(type) { return this.sent.filter((m) => m.type === type); },
-      granted() { return this.of("YAP_AUDIO_GRANTED").map((m) => m.jobId); },
-      last(type) { const l = this.of(type); return JSON.parse(JSON.stringify(l[l.length - 1])); } // clone: vm realm objects fail deepEqual
-    };
-  };
-  const connect = (platform) => {
-    const port = fakePort();
-    onConnect(port);
-    port.emit({ type: "YAP_HELLO", jobId: "hello", platform, state: "idle" });
-    return port;
-  };
-  return { connect };
-}
-
-test("cross-tab audio coordinator grants ready replies in enqueue order", () => {
-  const { connect } = loadCoordinator();
-  const first = connect("chatgpt");
-  const second = connect("claude");
-  first.emit({ type: "YAP_AUDIO_ENQUEUE", jobId: "first", platform: "chatgpt" });
-  second.emit({ type: "YAP_AUDIO_ENQUEUE", jobId: "second", platform: "claude" });
-  second.emit({ type: "YAP_AUDIO_READY", jobId: "second" });
-  assert.deepEqual(second.granted(), [], "later reply must not bypass an unready head");
-  first.emit({ type: "YAP_AUDIO_READY", jobId: "first" });
-  assert.deepEqual(first.granted(), ["first"]);
-  assert.deepEqual(second.granted(), []);
-  first.emit({ type: "YAP_AUDIO_DONE", jobId: "first" });
-  assert.deepEqual(second.granted(), ["second"]);
-});
-
-test("a reading the user started keeps the floor: queued replies wait, never talk over it", () => {
-  const { connect } = loadCoordinator();
-  const grok = connect("grok");
-  const gemini = connect("gemini");
-  // The user clicks Grok's own read-aloud button (not a queued job).
-  grok.emit({ type: "YAP_PLAYBACK", jobId: "playback", state: "playing" });
-  // Gemini finishes a reply while Grok is still talking.
-  gemini.emit({ type: "YAP_AUDIO_ENQUEUE", jobId: "g1", platform: "gemini" });
-  gemini.emit({ type: "YAP_AUDIO_READY", jobId: "g1" });
-  assert.deepEqual(gemini.granted(), [], "must wait for the reading already playing");
-  assert.equal(grok.of("YAP_PAUSE_NOW").length, 0, "the playing tab is never paused by a queued reply");
-  // The modal in Gemini's tab shows what plays elsewhere and what is next.
-  const view = gemini.last("YAP_QUEUE");
-  assert.deepEqual(view.others, [{ platform: "grok", state: "playing" }]);
-  assert.deepEqual(view.next, [{ platform: "gemini", ready: true }]);
-  // Grok finishes on its own: the queue moves on.
-  grok.emit({ type: "YAP_PLAYBACK", jobId: "playback", state: "idle" });
-  assert.deepEqual(gemini.granted(), ["g1"]);
-});
-
-test("a paused reading still holds the floor until it ends", () => {
-  const { connect } = loadCoordinator();
-  const grok = connect("grok");
-  const gemini = connect("gemini");
-  grok.emit({ type: "YAP_PLAYBACK", jobId: "playback", state: "playing" });
-  grok.emit({ type: "YAP_PLAYBACK", jobId: "playback", state: "paused" });
-  gemini.emit({ type: "YAP_AUDIO_ENQUEUE", jobId: "g1", platform: "gemini" });
-  gemini.emit({ type: "YAP_AUDIO_READY", jobId: "g1" });
-  assert.deepEqual(gemini.granted(), [], "paused Grok reading must not be replaced");
-  assert.deepEqual(gemini.last("YAP_QUEUE").others, [{ platform: "grok", state: "paused" }]);
-  grok.emit({ type: "YAP_PLAYBACK", jobId: "playback", state: "idle" });
-  assert.deepEqual(gemini.granted(), ["g1"]);
-});
-
-test("starting to play in one tab pauses (not stops) the others; pause is per tab", () => {
-  const { connect } = loadCoordinator();
-  const grok = connect("grok");
-  const gemini = connect("gemini");
-  grok.emit({ type: "YAP_PLAYBACK", jobId: "playback", state: "playing" });
-  // User clicks Gemini's own icon: override. Only Grok is asked to pause.
-  gemini.emit({ type: "YAP_PLAYBACK", jobId: "playback", state: "playing" });
-  assert.equal(grok.of("YAP_PAUSE_NOW").length, 1);
-  assert.equal(gemini.of("YAP_PAUSE_NOW").length, 0);
-  // Grok obeys and reports paused; that must not pause Gemini.
-  grok.emit({ type: "YAP_PLAYBACK", jobId: "playback", state: "paused" });
-  assert.equal(gemini.of("YAP_PAUSE_NOW").length, 0);
-  // Pressing play in Grok's own modal resumes Grok and pauses Gemini.
-  grok.emit({ type: "YAP_PLAYBACK", jobId: "playback", state: "playing" });
-  assert.equal(gemini.of("YAP_PAUSE_NOW").length, 1);
-  assert.equal(grok.of("YAP_PAUSE_NOW").length, 1, "Grok was only paused once, by the Gemini override");
-});
-
-test("play-next starts the queue head now, pausing whatever sounds", () => {
-  const { connect } = loadCoordinator();
-  const grok = connect("grok");
-  const gemini = connect("gemini");
-  grok.emit({ type: "YAP_PLAYBACK", jobId: "playback", state: "playing" });
-  gemini.emit({ type: "YAP_AUDIO_ENQUEUE", jobId: "g1", platform: "gemini" });
-  gemini.emit({ type: "YAP_AUDIO_READY", jobId: "g1" });
-  assert.deepEqual(gemini.granted(), []);
-  grok.emit({ type: "YAP_AUDIO_PLAY_NEXT", jobId: "playnext" });
-  assert.deepEqual(gemini.granted(), ["g1"]);
-  assert.equal(grok.of("YAP_PAUSE_NOW").length, 1);
-});
-
-test("play-next continues a paused queued reading instead of skipping it", () => {
-  const { connect } = loadCoordinator();
-  const grok = connect("grok");
-  const gemini = connect("gemini");
-  grok.emit({ type: "YAP_AUDIO_ENQUEUE", jobId: "k1", platform: "grok" });
-  grok.emit({ type: "YAP_AUDIO_READY", jobId: "k1" });
-  assert.deepEqual(grok.granted(), ["k1"]);
-  grok.emit({ type: "YAP_PLAYBACK", jobId: "playback", state: "playing" });
-  grok.emit({ type: "YAP_PLAYBACK", jobId: "playback", state: "paused" });
-  gemini.emit({ type: "YAP_AUDIO_PLAY_NEXT", jobId: "playnext" });
-  assert.equal(grok.of("YAP_RESUME_NOW").length, 1);
-});
-
-test("a closed tab releases the floor", () => {
-  const { connect } = loadCoordinator();
-  const grok = connect("grok");
-  const gemini = connect("gemini");
-  grok.emit({ type: "YAP_PLAYBACK", jobId: "playback", state: "paused" });
-  gemini.emit({ type: "YAP_AUDIO_ENQUEUE", jobId: "g1", platform: "gemini" });
-  gemini.emit({ type: "YAP_AUDIO_READY", jobId: "g1" });
-  assert.deepEqual(gemini.granted(), []);
-  grok.disconnect();
-  assert.deepEqual(gemini.granted(), ["g1"]);
-});
-
-test("modal is per tab: waveform follows real sound, speech cancel is guarded, queue is shown", () => {
-  const player = fs.readFileSync(path.join(root, "src", "player-ui.js"), "utf8");
-  const narrator = fs.readFileSync(path.join(root, "src", "chat-narrator.js"), "utf8");
-  const hook = fs.readFileSync(path.join(root, "src", "media-hook.js"), "utf8");
-  // waveform animates on "playing", not on "active"
-  assert.match(player, /classList\.toggle\("paused", !live\)/);
-  assert.match(hook, /const playing = !!el && !el\.paused && !el\.ended && el\.readyState >= 3/);
-  // the shared browser speech queue is only cancelled when this tab is speaking
-  assert.doesNotMatch(narrator.replace(/const cancelSpeech[^\n]*\n/, ""), /speechSynthesis\.cancel\(\)/);
-  assert.match(narrator, /inFlight > 0/);
-  // queue + play-next are surfaced in the modal
-  assert.match(player, /Up next:/);
-  assert.match(player, /data-a="playnext"/);
-});
-
-test("chat narration has mandatory identities, per-LLM voices, and full-width waveform", () => {
-  const narrator = fs.readFileSync(path.join(root, "src", "chat-narrator.js"), "utf8");
-  const player = fs.readFileSync(path.join(root, "src", "player-ui.js"), "utf8");
-  const popup = fs.readFileSync(path.join(root, "popup", "popup.html"), "utf8");
-  assert.match(narrator, /Resposta do \$\{s\}/);
-  assert.match(narrator, /Oi, agora é o \$\{s\} falando/);
-  assert.doesNotMatch(narrator, /if \(!cfg\.chatAnnounce\) return/);
-  for (const id of ["chatgptVoiceId", "claudeVoiceId", "geminiVoiceId", "grokVoiceId"]) {
-    assert.match(popup, new RegExp(`id=["']${id}["']`));
-  }
-  assert.match(player, /class="screenwave"/);
-  assert.match(player, /position:fixed; top:0; left:0; right:0/);
-});
-
 test("popup loads and explicitly saves a local ElevenLabs key", async () => {
   class FakeClassList {
     constructor() { this.values = new Set(); }
@@ -572,25 +399,6 @@ test("onboarding saves the ElevenLabs key before verification completes", async 
   assert.match(element("statusTxt").textContent, /saved/);
 });
 
-test("popup platform controls and content-script coverage stay aligned", () => {
-  const page = fs.readFileSync(path.join(root, "popup", "popup.html"), "utf8");
-  const adapters = fs.readFileSync(path.join(root, "src", "chat-adapters.js"), "utf8");
-  const expected = [
-    ["Lovable", "lovable.dev"],
-    ["ChatGPT", "chatgpt.com"],
-    ["Claude", "claude.ai"],
-    ["Gemini", "gemini.google.com"],
-    ["Grok", "grok.com"]
-  ];
-  const manifestMatches = manifest.content_scripts.flatMap((entry) => entry.matches);
-  for (const [name, host] of expected) {
-    assert.match(page, new RegExp(name, "i"));
-    assert.ok(fs.existsSync(path.join(root, "assets", "platforms", `${name.toLowerCase()}.${name === "Lovable" ? "ico" : "png"}`)));
-    assert.ok(manifestMatches.some((match) => match.includes(host)), `${host} missing from content scripts`);
-    if (name !== "Lovable") assert.match(adapters, new RegExp(`id: ["']${name.toLowerCase()}["']`));
-  }
-});
-
 test("current ElevenLabs speech models are visible and deprecated Turbo v2.5 is removed", () => {
   const html = fs.readFileSync(path.join(root, "popup", "popup.html"), "utf8");
   for (const id of ["eleven_v4", "eleven_v4_turbo", "eleven_v3", "eleven_v3_conversational", "eleven_multilingual_v2", "eleven_flash_v2_5"]) {
@@ -599,32 +407,13 @@ test("current ElevenLabs speech models are visible and deprecated Turbo v2.5 is 
   assert.doesNotMatch(html, /value=["']eleven_turbo_v2_5["']/);
 });
 
-test("local narration stats accumulate daily words and estimated time", () => {
-  let stored = { yappableStatsV1: { v: 1, days: {} } };
-  const context = {
-    Date,
-    chrome: { storage: { local: {
-      get: (_defaults, cb) => cb(stored),
-      set: (patch) => { stored = { ...stored, ...patch }; }
-    } } }
-  };
-  vm.createContext(context);
-  vm.runInContext(fs.readFileSync(path.join(root, "src", "stats.js"), "utf8"), context);
-  context.YapStats.record("one two three four five", "chatgpt");
-  const day = stored.yappableStatsV1.days[context.YapStats.dayKey()];
-  assert.equal(day.words, 5);
-  assert.equal(day.narrations, 1);
-  assert.equal(day.platforms.chatgpt.words, 5);
-  assert.equal(day.seconds, 2);
-});
-
-test("platforms live in an inline tab; stop button is grey until audio plays", () => {
+test("stop button is grey until Lovable audio plays", () => {
   const html = fs.readFileSync(path.join(root, "popup", "popup.html"), "utf8");
-  assert.match(html, /id="tabPlatforms"/);
-  assert.match(html, /id="viewPlatforms"/);
-  assert.doesNotMatch(html, /platformsModal|openPlatforms/);
   assert.match(html, /\.stop-btn\.live \{[^}]*var\(--danger\)/);
   assert.doesNotMatch(html, /\.stop-btn \{[^}]*color: var\(--danger\)/);
+  assert.doesNotMatch(html.replace(/<a id="crossPromo"[\s\S]*?<\/a>/, ""), /tabPlatforms|viewPlatforms|chatgpt|claude|gemini|grok/i);
+  assert.match(html, /<a id="crossPromo"[^>]*\bhidden\b/);
   const js = fs.readFileSync(path.join(root, "popup", "popup.js"), "utf8");
   assert.match(js, /audible: true/);
+  assert.match(js, /LOVABLE_URLS/);
 });

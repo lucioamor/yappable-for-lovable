@@ -14,7 +14,7 @@ Yappable for Lovable: voice mode that reads chat & talks back
 ## Short description (max 132 chars)
 
 ```
-Voice mode for Lovable, ChatGPT, Claude, Gemini & Grok: reads every reply aloud, hands-free. Native or ElevenLabs voices.
+Voice mode for Lovable: reads every build aloud, hands-free, in your language. Native or ElevenLabs voices.
 ```
 
 > SEO note: the **name** and **short description** are the strongest ranking
@@ -51,8 +51,6 @@ what to validate** — and speaks it in a few seconds of natural voice.
 - **Knows what Lovable is doing.** The silence monitor reads the real on-screen
   status word ("Transcribing", "Generating") with elapsed time and the task
   label, instead of a generic "in progress."
-- **Also on ChatGPT, Claude, Gemini and Grok.** Each reply is introduced by its LLM, plays in
-  completion order across tabs with one voice at a time, and gets a floating player.
 - **Four narration modes** — Fast, Beginner (default), Advanced, and Full — so
   you control the level of detail.
 - **Risk detector.** Flags responses that touch unvalidated metrics, UI copy,
@@ -70,7 +68,7 @@ the browser — your Lovable response text never leaves your machine on this pat
 ElevenLabs is optional; if enabled, only the final narration text is sent to
 generate audio, and your key is stored locally and never synced.
 
-Activates only on Lovable, ChatGPT, Claude, Gemini, and Grok, and makes no
+Activates only on Lovable, and makes no
 unnecessary network requests.
 
 *Independent extension for Lovable builders. Not affiliated with, endorsed by,
@@ -80,11 +78,8 @@ or sponsored by Lovable.*
 
 ## What's new (v1.3.0)
 
-**Talks back on ChatGPT, Claude, Gemini and Grok too — one voice at a time.**
+**Lovable-only, lighter permissions.**
 
-- 🗣️ **Narrates every LLM** — each reply starts by saying which LLM is speaking (concise or casual intro).
-- 🔗 **One voice at a time across tabs** — replies queue in completion order; a new one pauses, never cuts, the current one.
-- 🎛️ **Floating player in every chat tab** — play/pause, seek, speed, shortcuts (Alt+K), and "Up next" queue.
-- 🗂️ **Compact Platforms tab** — on/off and an ElevenLabs voice per LLM, in one tidy list.
+- 🔒 **Only Lovable + ElevenLabs** — chat narration for ChatGPT, Claude, Gemini and Grok now lives in its own extension, Yappable for your AI.
 - ⏹️ **Smarter Stop button** — grey when idle, red only while something is speaking.
-- 📊 **Waveform that only moves with real sound**, plus daily stats (words, minutes, narrations).
+- 📊 **Daily stats** on the main screen (words, minutes, narrations).
