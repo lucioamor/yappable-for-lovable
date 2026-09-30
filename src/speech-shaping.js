@@ -34,7 +34,10 @@
 
   // modelo -> família de sintaxe. Único ponto que conhece nomes de modelo.
   const MODEL_FAMILY = {
-    eleven_v3: "v3tags"
+    eleven_v3: "v3tags",
+    eleven_v3_conversational: "v3tags",
+    eleven_v4: "v3tags",
+    eleven_v4_turbo: "v3tags"
     // qualquer outro (multilingual_v2, turbo_v2_5, flash_v2_5...) => "ssml"
   };
   const familyOf = (model) => MODEL_FAMILY[model] || "ssml";

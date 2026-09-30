@@ -45,9 +45,10 @@ Reading is a commodity. Knowing *what's happening right now and where to look* i
 - **Silence monitoring** — speaks up if Lovable stalls mid-task, with elapsed time and task label
 - **Error alert** — distinct chime when Lovable surfaces a "Try to fix" error that needs your click
 - **Animated waveform bar** — optional visual feedback at the top of the page while narrating (toggle in popup)
+- **Cross-tab audio queue** — ChatGPT, Claude, Gemini, and Grok replies play in completion order without overlapping
 - **Multi-tab awareness** — prefixes the project name when you've got more than one Lovable tab open
 - **100% local by default** — all processing runs in the browser; ElevenLabs is optional
-- **Minimal permissions** — only activates on `lovable.dev`
+- **Scoped permissions** — activates only on Lovable and the four explicitly supported LLM sites
 
 ---
 
@@ -106,7 +107,10 @@ speech shaping, and completion-sound interception.
 Yappable also reads the finished reply on **chatgpt.com, claude.ai, gemini.google.com and grok.com**, with the same floating player.
 
 - **Two voices.** *Site*: Yappable presses the site's own "read aloud" for free. *Yappable*: an on-device summary (same modes as Lovable) spoken by ElevenLabs or your system voice. Switch from the player.
-- **Announced replies.** Claude and Gemini replies start with "Resposta do Claude:" / "Resposta do Gemini:" (localized). The full reply is always spoken; nothing is cut off.
+- **Every reply identifies its LLM.** ChatGPT, Claude, Gemini, and Grok always introduce themselves before the answer. Choose a concise or casual localized introduction in Platforms.
+- **One ordered queue across tabs.** Simultaneous replies play in FIFO completion order without overlap. ElevenLabs can generate the MP3 while a prior reply is playing.
+- **A voice per LLM.** In Yappable + ElevenLabs mode, each of the four LLMs can use its own voice or inherit the global voice. In Site mode, the answer keeps the site's original voice.
+- **Waveform on every LLM.** The full-width top activity bar and floating player appear on each supported chat page while its audio is active.
 - **Player.** Play/pause, −15 s / +15 s (where the site's audio can seek) and speed from 0.5× to 3×. Shortcuts: `Alt+K` play/pause, `Alt+J` / `Alt+L` −15 / +15 s, `Alt+,` / `Alt+.` slower / faster, `Alt+0` reset, `Esc` stop.
 - **Per-site details** (DOM signals, how each site's text-to-speech works) are in [docs/CHAT-SITES-DOM.md](docs/CHAT-SITES-DOM.md).
 

@@ -84,6 +84,10 @@
     .icon-btn.gear:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
     .icon-btn.repeat-btn { width: 34px; min-width: 34px; min-height: 34px; font-size: 16px; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
     .icon-btn.repeat-btn:hover { color: var(--ok-strong); border-color: var(--ok-strong); background: rgba(34,197,94,.1); }
+    .icon-btn.stop-btn { width: 34px; min-width: 34px; min-height: 34px; font-size: 13px; color: var(--muted-3); border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+    .icon-btn.stop-btn:hover { color: var(--muted); border-color: var(--border); background: var(--surface-2); }
+    .icon-btn.stop-btn.live { color: var(--danger); border-color: var(--danger); background: rgba(248,113,113,.12); }
+    .icon-btn.stop-btn.live:hover { color: #fff; border-color: var(--danger); background: rgba(248,113,113,.28); }
 
     .field { display: grid; grid-template-columns: 108px 1fr 46px; align-items: center; gap: 8px; margin: 7px 0; }
     .field.nv { grid-template-columns: 108px 1fr; }
@@ -280,6 +284,23 @@
     .seed-row input[type="number"] { width: 110px; min-width: 80px; flex: none; }
     .modal::-webkit-scrollbar { width: 5px; }
     .modal::-webkit-scrollbar-thumb { background: #2d2d31; border-radius: 8px; }
+    .tabs { display: flex; gap: 4px; margin: -4px 0 10px; padding: 3px; background: var(--surface); border: 1px solid var(--border-soft); border-radius: 9px; }
+    .tab { flex: 1; min-height: 26px; padding: 4px 8px; border: 0; background: transparent; color: var(--muted); font-size: 12px; }
+    .tab:hover { background: transparent; color: var(--txt-2); }
+    .tab.on { background: var(--surface-2); color: var(--accent); box-shadow: 0 0 0 1px var(--border); }
+    #viewMain[hidden], #viewPlatforms[hidden] { display: none; }
+    .platform-list { display: grid; gap: 4px; }
+    .platform-row { display: grid; grid-template-columns: 20px 62px 1fr auto; align-items: center; gap: 8px; padding: 5px 8px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface); }
+    .platform-row img { width: 18px; height: 18px; object-fit: contain; border-radius: 5px; }
+    .platform-row strong { color: var(--txt); font-size: 12px; }
+    .platform-row select { width: 100%; min-width: 0; margin: 0; padding: 3px 20px 3px 6px; font-size: 11px; }
+    .platform-announcement { display: grid; grid-template-columns: 42px 1fr; align-items: center; gap: 8px; margin: 0 0 8px; }
+    .platform-announcement label { margin: 0; color: var(--txt-2); font-size: 12px; font-weight: 600; }
+    .platform-announcement select { width: 100%; min-width: 0; padding: 4px 22px 4px 7px; font-size: 11px; }
+    .platform-note { margin: 8px 0 0; color: var(--muted-2); font-size: 10.5px; line-height: 1.4; }
+    .stats-line { display: flex; align-items: baseline; gap: 10px; margin: 0 0 8px; padding: 6px 9px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface); font-size: 11px; color: var(--muted-2); }
+    .stats-line b { color: var(--val); font-variant-numeric: tabular-nums; }
+    .stats-line em { margin-left: auto; font-style: normal; text-transform: uppercase; letter-spacing: .06em; font-size: 10px; }
   </style>
 </head>
 <body>
@@ -290,6 +311,7 @@
     </div>
     <div class="header-actions">
       <button class="icon-btn repeat-btn narr-section" id="repeatBtn" title="Repeat last narration.">↩</button>
+      <button class="icon-btn stop-btn" id="stopBtn" title="Stop audio on every Yappable platform" aria-label="Stop audio">■</button>
       <div class="dropdown narr-section" id="langDrop" title="Narration language (native voice and ElevenLabs).">
         <button type="button" class="lang-pill" id="langBtn" aria-label="Narration language"></button>
         <div class="dd-list" id="langList" hidden></div>
@@ -298,6 +320,12 @@
     </div>
   </div>
 
+  <nav class="tabs" role="tablist" aria-label="Yappable sections">
+    <button type="button" class="tab on" id="tabMain" role="tab" aria-selected="true" aria-controls="viewMain">Narration</button>
+    <button type="button" class="tab" id="tabPlatforms" role="tab" aria-selected="false" aria-controls="viewPlatforms">Platforms</button>
+  </nav>
+
+  <div id="viewMain" role="tabpanel" aria-labelledby="tabMain">
   <!-- hero: on/off + verbose (whole-session actions) -->
   <div class="control hero" id="masterCard">
     <div class="master" title="Enable or disable narration. Turning off stops any ongoing speech immediately.">
@@ -389,9 +417,11 @@
       <label for="elevenModel">Model</label>
       <select id="elevenModel">
         <option value="eleven_flash_v2_5">Flash v2.5 (Recommended)</option>
-        <option value="eleven_turbo_v2_5">Turbo v2.5</option>
+        <option value="eleven_v4_turbo">v4 Turbo (Expressive realtime)</option>
+        <option value="eleven_v4">v4 (Highest quality)</option>
+        <option value="eleven_v3_conversational">v3 Conversational</option>
+        <option value="eleven_v3">v3 (Expressive)</option>
         <option value="eleven_multilingual_v2">Multilingual v2</option>
-        <option value="eleven_v3">v3 (alpha)</option>
       </select>
     </div>
 
@@ -419,9 +449,9 @@
       <span class="rngval" id="styleOut">50%</span>
     </div>
 
-    <div class="field" title="Speech rate. 1.00 = normal; up to 3.00 for faster narration.">
+    <div class="field" title="Speech rate. ElevenLabs supports 0.70 to 1.20; 1.00 = normal.">
       <label for="elevenSpeed">Speed</label>
-      <input type="range" id="elevenSpeed" min="0.5" max="3" step="0.05" />
+      <input type="range" id="elevenSpeed" min="0.7" max="1.2" step="0.05" />
       <span class="rngval" id="elevenSpeedOut">+10%</span>
     </div>
 
@@ -446,6 +476,29 @@
       </div>
     </div>
   </details>
+  </div><!-- /viewMain -->
+
+  <!-- PLATFORMS TAB -->
+  <div id="viewPlatforms" role="tabpanel" aria-labelledby="tabPlatforms" hidden>
+    <div class="stats-line" aria-label="Today's narration statistics">
+      <span><b id="statsWords">0</b> words</span><span><b id="statsMinutes">0</b> min</span><span><b id="statsNarrations">0</b> narrations</span><em>today</em>
+    </div>
+    <div class="platform-announcement">
+      <label for="chatAnnouncementStyle">Intro</label>
+      <select id="chatAnnouncementStyle" title="How each LLM introduces its reply">
+        <option value="concise">Concise — “Resposta do Gemini”</option>
+        <option value="casual">Casual — “Oi, agora é o Gemini falando”</option>
+      </select>
+    </div>
+    <div class="platform-list">
+      <div class="platform-row"><img src="../assets/platforms/lovable.ico" alt=""><strong>Lovable</strong><span class="pvoice"></span><div class="switch"><input type="checkbox" id="lovableEnabled" aria-label="Enable Lovable"></div></div>
+      <div class="platform-row"><img src="../assets/platforms/chatgpt.png" alt=""><strong>ChatGPT</strong><select id="chatgptVoiceId" class="pvoice" aria-label="ElevenLabs voice for ChatGPT"></select><div class="switch"><input type="checkbox" id="chatgptEnabled" aria-label="Enable ChatGPT"></div></div>
+      <div class="platform-row"><img src="../assets/platforms/claude.png" alt=""><strong>Claude</strong><select id="claudeVoiceId" class="pvoice" aria-label="ElevenLabs voice for Claude"></select><div class="switch"><input type="checkbox" id="claudeEnabled" aria-label="Enable Claude"></div></div>
+      <div class="platform-row"><img src="../assets/platforms/gemini.png" alt=""><strong>Gemini</strong><select id="geminiVoiceId" class="pvoice" aria-label="ElevenLabs voice for Gemini"></select><div class="switch"><input type="checkbox" id="geminiEnabled" aria-label="Enable Gemini"></div></div>
+      <div class="platform-row"><img src="../assets/platforms/grok.png" alt=""><strong>Grok</strong><select id="grokVoiceId" class="pvoice" aria-label="ElevenLabs voice for Grok"></select><div class="switch"><input type="checkbox" id="grokEnabled" aria-label="Enable Grok"></div></div>
+    </div>
+    <p class="platform-note">Voices apply in ElevenLabs mode; “Site” keeps each LLM's own voice. Replies play in completion order across tabs, never overlapping.</p>
+  </div>
 
   <div id="msg"></div>
 
@@ -466,6 +519,9 @@
       <div class="keyinput">
         <input type="password" id="elevenKey" placeholder="xi-api-key..." />
         <button class="ghost mini" id="keyReveal" title="Show/hide">👁</button>
+      </div>
+      <div class="btnrow">
+        <button class="act primary" id="saveElevenKey">Save &amp; verify key</button>
       </div>
       <a id="keyAffiliate" class="affiliate" href="https://nxlv.ai/elevenlabs?utm_source=yappable" target="_blank" rel="noopener noreferrer" hidden>
         Don't have a key yet? <strong>Create an account →</strong>
@@ -493,8 +549,8 @@
       <div class="field nv" title="Text normalization (numbers, dates, symbols). on = always normalize; auto = decide per request; off = faster.">
         <label for="elevenTextNormalization">Normalization</label>
         <select id="elevenTextNormalization">
-          <option value="on">On (default)</option>
-          <option value="auto">Auto</option>
+          <option value="auto">Auto (recommended)</option>
+          <option value="on">On (Enterprise on Flash v2.5)</option>
           <option value="off">Off</option>
         </select>
       </div>
@@ -533,6 +589,8 @@
   <script src="../src/risk-detector.js"></script>
   <script src="../src/ir-builder.js"></script>
   <script src="../src/renderer.js"></script>
+  <script src="../src/tts-provider.js"></script>
+  <script src="../src/stats.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

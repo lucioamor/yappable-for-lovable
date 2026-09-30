@@ -14,6 +14,7 @@
   // ---------------------------------------------------------------------------
   const DEFAULTS = {
     enabled: true,
+    lovableEnabled: true,
     engine: "native", // "native" | "elevenlabs"
     lang: "auto", // "auto" = detecta pelo navegador; fallback en-US (resolveLang)
     rate: 1.05,
@@ -47,14 +48,14 @@
     elevenStability: 0.2, // 0–1
     elevenSimilarity: 0.2, // similarity_boost 0–1
     elevenStyle: 0.5, // style exaggeration 0–1 (v2+)
-    elevenSpeed: 1.1, // velocidade (REST 0.25–4.0)
-    elevenTextNormalization: "on", // auto | on | off
+    elevenSpeed: 1.1, // velocidade (REST 0.7–1.2)
+    elevenTextNormalization: "auto", // auto | on | off; "on" on Flash v2.5 requires Enterprise
     elevenSeedRandom: true, // true = sem seed fixo
     elevenSeed: null // seed determinístico 0–4294967295
   };
 
   // modelos que aceitam language_code (Multilingual v2 auto-detecta)
-  const LANG_MODELS = /turbo_v2_5|flash_v2_5|eleven_v3/;
+  const LANG_MODELS = /flash_v2_5|eleven_v3|eleven_v4/;
   const langCode = (l) => (l || "").split("-")[0];
   // "auto" -> melhor match com o idioma do navegador; fallback en-US.
   const SUPPORTED_LANGS = [
@@ -90,6 +91,7 @@
     (MODES.includes(m) ? m : (LEGACY_TO_MODE[m] || DEFAULTS.mode));
 
   let cfg = { ...DEFAULTS };
+  const lovableActive = () => cfg.enabled && cfg.lovableEnabled !== false;
 
   chrome.storage.sync.get({ ...DEFAULTS, mode: "", announce: "", lens: "" }, (stored) => {
     const legacyElevenKey = stored.elevenKey || "";
@@ -161,7 +163,8 @@
       warmupSummarizer();
     }
     // desligou "narrar conclusões" -> para a fala imediatamente
-    if (changes.enabled && changes.enabled.newValue === false) {
+    if ((changes.enabled && changes.enabled.newValue === false) ||
+        (changes.lovableEnabled && changes.lovableEnabled.newValue === false)) {
       stopSpeaking();
       try { clearPreview(); } catch (_) {}
     }
@@ -458,7 +461,7 @@
   }
 
   function playbackCurrent(epoch) {
-    return epoch === playbackEpoch && cfg.enabled;
+    return epoch === playbackEpoch && lovableActive();
   }
 
   // FILA ÚNICA DE ÁUDIO: TODO som da extensão (cue, narração final, progresso,
@@ -527,6 +530,7 @@
     } finally {
       if (playbackCurrent(epoch)) {
         completed = true;
+        try { globalThis.YapStats?.record(text, "lovable"); } catch (_) {}
         if (meta && meta.kind === "final") {
           markRead(el); // narração terminou: rosa escuro
           // Phase 1: close the trace run — all pipeline events for this narration are in
@@ -666,6 +670,11 @@
       voice_settings: voiceSettings,
       apply_text_normalization: cfg.elevenTextNormalization || "auto"
     };
+    // ElevenLabs documents forced normalization on Flash v2.5 as Enterprise-only.
+    // Existing installs may still have the old "on" default persisted in sync.
+    if (cfg.elevenModel === "eleven_flash_v2_5" && body.apply_text_normalization === "on") {
+      body.apply_text_normalization = "auto";
+    }
     if (LANG_MODELS.test(cfg.elevenModel)) body.language_code = langCode(cfg.lang);
     if (!cfg.elevenSeedRandom && cfg.elevenSeed != null) body.seed = cfg.elevenSeed;
 
@@ -714,7 +723,12 @@
           if (res.status === 401) _setAuthStatus("invalid");
           else if (res.status === 429) _setAuthStatus("quota_exceeded");
           else _setAuthStatus("network_error");
-          throw new Error(`ElevenLabs ${res.status}`);
+          let apiDetail = "";
+          try {
+            const payload = await res.clone().json();
+            apiDetail = String(payload && (payload.detail?.message || payload.detail || payload.message) || "").slice(0, 300);
+          } catch (_) {}
+          throw new Error(`ElevenLabs ${res.status}${apiDetail ? `: ${apiDetail}` : ""}`);
         }
         // Keep the timeout active while consuming the body as well. A server can
         // send headers and then stall before the MP3 is complete.
@@ -1670,7 +1684,7 @@
   // Caminho rapido: tenta narrar imediatamente a ultima mensagem concluida.
   // Dedup por conteudo + stopSpeaking() fazem a ultima versao vencer sem debounce.
   function tryNarrateNewest() {
-    if (!ready || !cfg.enabled) return false;
+    if (!ready || !lovableActive()) return false;
     const r = newestQualifying();
     if (!r) return false;
     commitNarrate(r);
@@ -1709,7 +1723,7 @@
 
   function onComplete(result, token, prefix) {
     clearPreview();
-    if (!cfg.enabled) return;
+    if (!lovableActive()) return;
     // Constrói a IR uma vez; todas as funções abaixo reutilizam via cachedIR.
     const ir = getOrBuildIR(result);
     publishOutputWithIR(result, ir, prefix);
@@ -1717,9 +1731,9 @@
     const startDelay = Math.min(Number(cfg.delayMs) || 0, FAST_START_MAX_DELAY);
 
     setTimeout(async () => {
-      if (!cfg.enabled || token !== narrationToken) return;
+      if (!lovableActive() || token !== narrationToken) return;
       const body = await buildSpeech(result);
-      if (!body || !cfg.enabled || token !== narrationToken) return;
+      if (!body || !lovableActive() || token !== narrationToken) return;
       const text = prefix ? prefix + body : body;
       // Atualiza o payload com o texto efetivamente narrado.
       publishOutputWithIR(result, ir, prefix, body);
@@ -2026,7 +2040,7 @@
   }
 
   function tryNarrateProgress() {
-    if (!ready || !cfg.enabled || !(cfg.verboseEnabled || allowActiveTaskRead())) return;
+    if (!ready || !lovableActive() || !(cfg.verboseEnabled || allowActiveTaskRead())) return;
     // Widget flutuante novo: rótulo uma vez, descrição a cada mudança (pacing
     // pela fila, sem o throttle de 30s — senão perderia os passos rápidos).
     const w = extractTaskWidget();
@@ -2118,7 +2132,7 @@
   }
 
   function checkErrorToast() {
-    if (!ready || !cfg.enabled || !cfg.errorAlertEnabled) return;
+    if (!ready || !lovableActive() || !cfg.errorAlertEnabled) return;
     const toast = findErrorToast();
     if (toast && !errorActive) {
       errorActive = true;
@@ -2313,7 +2327,7 @@
   // ---------------------------------------------------------------------------
   self.LovableNarrator = {
     say(text) {
-      if (!cfg.enabled) return;
+      if (!lovableActive()) return;
       enqueueLocalized(text);
     },
     isSpeaking() {

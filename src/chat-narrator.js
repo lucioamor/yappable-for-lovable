@@ -17,7 +17,8 @@
 // ElevenLabs params + key). Extra keys in storage.sync:
 //   chatNarration  (bool, default true)         master switch for chat sites
 //   chatVoiceMode  ("yappable" | "site")        toggled from the modal
-//   chatAnnounce   (bool, default true)         start with "Resposta do Claude:" etc.
+//   chatAnnouncementStyle ("concise" | "casual") mandatory spoken identity
+//   <platform>VoiceId (string)                  optional ElevenLabs voice override
 // The full text is always spoken: never add a length cap here.
 // ============================================================================
 (() => {
@@ -31,8 +32,17 @@
   const DEFAULTS = {
     enabled: true,
     chatNarration: true,
+    chatgptEnabled: true,
+    claudeEnabled: true,
+    geminiEnabled: true,
+    grokEnabled: true,
     chatVoiceMode: "yappable",
-    chatAnnounce: true,
+    chatAnnounce: true, // retained for migration; identity is mandatory from 1.2 onward
+    chatAnnouncementStyle: "concise",
+    chatgptVoiceId: "",
+    claudeVoiceId: "",
+    geminiVoiceId: "",
+    grokVoiceId: "",
     mode: "beginner", // fast | beginner | advanced | completo (shared with Lovable)
     engine: "native",
     lang: "auto",
@@ -47,14 +57,16 @@
     elevenSimilarity: 0.2,
     elevenStyle: 0.5,
     elevenSpeed: 1.1,
-    elevenTextNormalization: "on"
+    elevenTextNormalization: "auto"
   };
-  const LANG_MODELS = /turbo_v2_5|flash_v2_5|eleven_v3/;
+  const LANG_MODELS = /flash_v2_5|eleven_v3|eleven_v4/;
   const ELEVEN_TIMEOUT_MS = 30000;
   const MODEL_TIMEOUT_MS = 20000;
   const SITE_BUTTON_WAIT_MS = 5000;
   const NATIVE_CHUNK = 220; // Chrome drops long utterances; speak sentence chunks
   const CHARS_PER_SEC = 15; // rough speech pace at rate 1, for native seek/progress
+  const PLAY_CONFIRM_MS = 400; // sound must last this long before it counts as "playing" for other tabs
+  const MIN_READING_S = 2; // shorter clips are UI sounds, not a reading
 
   let cfg = { ...DEFAULTS, elevenKey: "" };
 
@@ -64,20 +76,26 @@
     return (p && p.credential && p.credential.value) || local.elevenKey || "";
   };
 
-  // Spoken before every reply: "Resposta do Claude:" (pt), "Claude's reply:" (en)...
+  // Every reply identifies its source. This is intentionally not optional:
+  // voices can be similar and several LLM tabs may finish close together.
   const PREFIXES = {
-    pt: (s) => `Resposta do ${s}:`,
-    en: (s) => `${s}'s reply:`,
-    es: (s) => `Respuesta de ${s}:`,
-    fr: (s) => `Réponse de ${s} :`,
-    de: (s) => `Antwort von ${s}:`,
-    it: (s) => `Risposta di ${s}:`
+    concise: {
+      pt: (s) => `Resposta do ${s}:`, en: (s) => `${s}'s reply:`,
+      es: (s) => `Respuesta de ${s}:`, fr: (s) => `Réponse de ${s} :`,
+      de: (s) => `Antwort von ${s}:`, it: (s) => `Risposta di ${s}:`
+    },
+    casual: {
+      pt: (s) => `Oi, agora é o ${s} falando.`, en: (s) => `Hi, this is ${s} speaking.`,
+      es: (s) => `Hola, ahora habla ${s}.`, fr: (s) => `Bonjour, ici ${s}.`,
+      de: (s) => `Hallo, hier spricht ${s}.`, it: (s) => `Ciao, qui parla ${s}.`
+    }
   };
   const prefixFor = (lang) => {
-    if (!cfg.chatAnnounce) return "";
-    const make = PREFIXES[String(lang || cfg.lang).split("-")[0].toLowerCase()] || PREFIXES.en;
+    const style = PREFIXES[cfg.chatAnnouncementStyle] || PREFIXES.concise;
+    const make = style[String(lang || cfg.lang).split("-")[0].toLowerCase()] || style.en;
     return make(adapter.name);
   };
+  const voiceForPlatform = () => cfg[`${adapter.id}VoiceId`] || cfg.elevenVoiceId;
   // media-hook.js lives in the page's MAIN world; talk to it over postMessage.
   const sendTts = (value) => window.postMessage({ "yap-ctl": true, cmd: "tts", value }, location.origin);
   const syncPrefix = () => { if (adapter.rewritable) sendTts({ prefix: prefixFor(cfg.lang) }); };
@@ -105,7 +123,7 @@
       cfg[k] = k === "lang" ? resolveLang(v.newValue) : v.newValue;
     }
     if (changes.chatVoiceMode) Player.setMode(cfg.chatVoiceMode);
-    if (changes.lang || changes.chatAnnounce) syncPrefix();
+    if (changes.lang || changes.chatAnnouncementStyle) syncPrefix();
     // Turning narration off must silence every source, including the site's own voice.
     if (!active()) Player.stopAll();
   });
@@ -114,7 +132,127 @@
     try { chrome.storage.sync.set({ chatVoiceMode: m }); } catch (_) {}
   });
 
-  const active = () => cfg.enabled && cfg.chatNarration;
+  const active = () => cfg.enabled && cfg.chatNarration && cfg[`${adapter.id}Enabled`] !== false;
+
+  // Register completion immediately, then mark it ready only after local
+  // interpretation / ElevenLabs generation. The background grants jobs FIFO.
+  const audioQueue = (() => {
+    let seq = 0;
+    let port = null;
+    let heartbeat = null;
+    const waiting = new Map();
+    const jobs = new Set();
+    const updateHeartbeat = () => {
+      if (jobs.size && port && !heartbeat) {
+        heartbeat = setInterval(() => {
+          try { port.postMessage({ type: "YAP_AUDIO_HEARTBEAT", jobId: "heartbeat", platform: adapter.id }); }
+          catch (_) {}
+        }, 20000);
+      } else if ((!jobs.size || !port) && heartbeat) {
+        clearInterval(heartbeat);
+        heartbeat = null;
+      }
+    };
+    const connect = () => {
+      if (port) return true;
+      try {
+        const next = chrome.runtime.connect({ name: "yappable-chat-audio" });
+        port = next;
+        next.onMessage.addListener((message) => {
+          if (!message) return;
+          if (message.type === "YAP_AUDIO_GRANTED") {
+            const resolve = waiting.get(message.jobId);
+            if (resolve) { waiting.delete(message.jobId); resolve(true); }
+          } else if (message.type === "YAP_QUEUE") {
+            Player.setQueue(message);
+          } else if (message.type === "YAP_PAUSE_NOW") {
+            // Another tab took the floor: pause (not stop) so this one can be resumed.
+            Player.pauseAll();
+          } else if (message.type === "YAP_RESUME_NOW") {
+            Player.resume();
+          }
+        });
+        next.onDisconnect.addListener(() => {
+          if (port === next) port = null;
+          updateHeartbeat();
+          for (const resolve of waiting.values()) resolve(false);
+          waiting.clear();
+        });
+        updateHeartbeat();
+        // A fresh port (first load or after the worker restarted) knows nothing
+        // about this tab: describe it and ask for the current queue.
+        try { next.postMessage({ type: "YAP_HELLO", jobId: "hello", platform: adapter.id, state: reported }); } catch (_) {}
+        return true;
+      } catch (_) { port = null; return false; }
+    };
+    let reported = "idle";
+    connect();
+
+    const post = (type, jobId, extra) => {
+      if (!port) return false;
+      try { port.postMessage({ type, jobId, platform: adapter.id, ...extra }); return true; }
+      catch (_) { return false; }
+    };
+    const enqueue = () => {
+      connect();
+      const jobId = `${adapter.id}-${Date.now()}-${++seq}`;
+      jobs.add(jobId);
+      updateHeartbeat();
+      post("YAP_AUDIO_ENQUEUE", jobId);
+      return {
+        async ready() {
+          if (!jobs.has(jobId)) return false;
+          // Never trade the no-overlap guarantee for a best-effort local play.
+          if (!port) return false;
+          const granted = new Promise((resolve) => waiting.set(jobId, resolve));
+          if (!post("YAP_AUDIO_READY", jobId)) { waiting.delete(jobId); return false; }
+          return granted;
+        },
+        done() { jobs.delete(jobId); updateHeartbeat(); waiting.delete(jobId); post("YAP_AUDIO_DONE", jobId); },
+        cancel() { jobs.delete(jobId); updateHeartbeat(); waiting.delete(jobId); post("YAP_AUDIO_CANCEL", jobId); }
+      };
+    };
+    // This tab's audio state, whatever started it (a queued reply, the user's click
+    // on the site's own button, or the modal). It is how the coordinator keeps a
+    // single voice audible and knows what to pause when another tab starts.
+    const playback = (state) => {
+      reported = state;
+      connect();
+      post("YAP_PLAYBACK", "playback", { state });
+    };
+    const playNext = () => { connect(); post("YAP_AUDIO_PLAY_NEXT", "playnext"); };
+    const cancelAll = () => {
+      for (const jobId of jobs) post("YAP_AUDIO_CANCEL", jobId);
+      jobs.clear();
+      updateHeartbeat();
+      for (const resolve of waiting.values()) resolve(false);
+      waiting.clear();
+    };
+    return { enqueue, cancelAll, playback, playNext };
+  })();
+
+  // Report this tab's audio state to the coordinator. "playing" is confirmed only
+  // after it lasts a moment and is not a short UI sound, so a notification ding
+  // can never pause a reading in another tab.
+  let playConfirm = null;
+  Player.onPlayback((state) => {
+    clearTimeout(playConfirm);
+    if (state !== "playing") { audioQueue.playback(state); return; }
+    playConfirm = setTimeout(() => {
+      const st = Player.snapshot();
+      if (!st.active || st.paused) return;
+      if (st.dur && st.dur < MIN_READING_S) return;
+      audioQueue.playback("playing");
+    }, PLAY_CONFIRM_MS);
+  });
+  Player.onPlayNext(() => audioQueue.playNext());
+
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message && message.type === "LN_STOP_NOW") {
+      audioQueue.cancelAll();
+      Player.stopAll();
+    }
+  });
   const timeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
 
   // ---- interpretation layer (on-device) --------------------------------------
@@ -183,6 +321,11 @@
     let audio = null; // ElevenLabs playback
     let nat = null; // { chunks, starts, total, idx, paused, restart, lang, charInChunk }
     let fetchCtrl = null;
+    // speechSynthesis is shared by the whole browser: a cancel() from an idle tab
+    // would silence a voice speaking in ANOTHER tab. Only cancel while this tab
+    // has an utterance of its own in flight.
+    let inFlight = 0;
+    const cancelSpeech = () => { if (inFlight > 0) { try { speechSynthesis.cancel(); } catch (_) {} } };
 
     const pickVoice = (lang) => {
       const voices = speechSynthesis.getVoices();
@@ -199,7 +342,7 @@
 
     function stop() {
       epoch++;
-      try { speechSynthesis.cancel(); } catch (_) {}
+      cancelSpeech();
       if (audio) { try { audio.pause(); } catch (_) {} audio = null; }
       if (fetchCtrl) { try { fetchCtrl.abort(); } catch (_) {} fetchCtrl = null; }
       nat = null;
@@ -218,7 +361,10 @@
         if (v) u.voice = v;
         nat.charInChunk = 0;
         u.onboundary = (e) => { if (my === epoch && nat) nat.charInChunk = e.charIndex || 0; };
-        u.onend = u.onerror = () => resolve();
+        let settled = false;
+        const finish = () => { if (settled) return; settled = true; inFlight = Math.max(0, inFlight - 1); resolve(); };
+        u.onend = u.onerror = finish;
+        inFlight++;
         speechSynthesis.speak(u);
       });
     }
@@ -239,7 +385,7 @@
 
     function restartNative() {
       nat.restart = true;
-      speechSynthesis.cancel(); // current chunk resolves; loop replays nat.idx
+      cancelSpeech(); // current chunk resolves; loop replays nat.idx
     }
 
     async function playNative(text, lang, my) {
@@ -247,14 +393,14 @@
       const starts = [];
       let acc = 0;
       for (const c of chunks) { starts.push(acc); acc += c.length + 1; }
-      speechSynthesis.cancel();
+      cancelSpeech();
       nat = { chunks, starts, total: acc, idx: 0, paused: false, restart: false, lang, charInChunk: 0 };
       Player.activate("own");
       await runNative(my);
     }
 
-    // ---- ElevenLabs: real <audio>, so seek and pitch-preserving speed are exact ----
-    async function playEleven(text, lang, my) {
+    // ---- ElevenLabs: generate before queue grant, play only after grant ---------
+    async function fetchEleven(text, lang) {
       const body = {
         text,
         model_id: cfg.elevenModel,
@@ -267,14 +413,16 @@
         },
         apply_text_normalization: cfg.elevenTextNormalization || "auto"
       };
+      if (cfg.elevenModel === "eleven_flash_v2_5" && body.apply_text_normalization === "on") {
+        body.apply_text_normalization = "auto";
+      }
       if (LANG_MODELS.test(cfg.elevenModel)) body.language_code = lang.split("-")[0];
       const ctrl = new AbortController();
       fetchCtrl = ctrl;
       const timer = setTimeout(() => ctrl.abort(), ELEVEN_TIMEOUT_MS);
-      let buf;
       try {
         const res = await fetch(
-          `https://api.elevenlabs.io/v1/text-to-speech/${cfg.elevenVoiceId}?output_format=${cfg.elevenOutputFormat}`,
+          `https://api.elevenlabs.io/v1/text-to-speech/${voiceForPlatform()}?output_format=${cfg.elevenOutputFormat}`,
           {
             method: "POST",
             headers: { "xi-api-key": cfg.elevenKey, "Content-Type": "application/json", Accept: "audio/mpeg" },
@@ -283,11 +431,14 @@
           }
         );
         if (!res.ok) throw new Error(`ElevenLabs ${res.status}`);
-        buf = await res.arrayBuffer();
+        return await res.arrayBuffer();
       } finally {
         clearTimeout(timer);
         if (fetchCtrl === ctrl) fetchCtrl = null;
       }
+    }
+
+    async function playElevenBuffer(buf, my) {
       if (my !== epoch) return;
       const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
       try {
@@ -309,14 +460,23 @@
       }
     }
 
-    async function speak(text, lang) {
-      stop(); // newest reply wins
-      const my = epoch;
+    async function prepare(text, lang) {
+      let elevenBuffer = null;
       if (cfg.engine === "elevenlabs" && cfg.elevenKey) {
-        try { await playEleven(text, lang, my); return; }
-        catch (_) { if (my !== epoch) return; } // fall through to the system voice
+        try { elevenBuffer = await fetchEleven(text, lang); }
+        catch (_) { elevenBuffer = null; } // fall through to the system voice
       }
-      await playNative(text, lang, my);
+      return async () => {
+        stop();
+        const my = epoch;
+        if (elevenBuffer) await playElevenBuffer(elevenBuffer, my);
+        else await playNative(text, lang, my);
+      };
+    }
+
+    async function speak(text, lang) {
+      const play = await prepare(text, lang);
+      return play();
     }
 
     const src = {
@@ -324,14 +484,14 @@
       state() {
         if (audio) {
           return {
-            active: true, paused: audio.paused, t: audio.currentTime || 0,
+            active: true, playing: !audio.paused && !audio.ended, paused: audio.paused, t: audio.currentTime || 0,
             dur: Number.isFinite(audio.duration) ? audio.duration : 0, rate: audio.playbackRate
           };
         }
         if (nat) {
           const pos = nat.starts[Math.min(nat.idx, nat.starts.length - 1)] + nat.charInChunk;
           return {
-            active: true, paused: nat.paused, t: pos / CHARS_PER_SEC,
+            active: true, playing: !nat.paused, paused: nat.paused, t: pos / CHARS_PER_SEC,
             dur: nat.total / CHARS_PER_SEC, rate: Player.rate()
           };
         }
@@ -342,7 +502,11 @@
         if (!nat) return;
         // Pause = cancel + remember the chunk (speechSynthesis.pause is unreliable in Chrome).
         if (nat.paused) { nat.paused = false; runNative(epoch); }
-        else { nat.paused = true; speechSynthesis.cancel(); }
+        else { nat.paused = true; cancelSpeech(); }
+      },
+      pause() {
+        if (audio) { audio.pause(); return; }
+        if (nat && !nat.paused) { nat.paused = true; cancelSpeech(); }
       },
       seek(sec) {
         if (audio) {
@@ -364,7 +528,7 @@
       stop
     };
     Player.register(src);
-    return { speak, stop };
+    return { prepare, speak, stop };
   })();
 
   // ---- site voice ---------------------------------------------------------------
@@ -386,9 +550,8 @@
 
   // Click the site's own read-aloud. Where the hook can rewrite the request
   // (Claude, Gemini), first hand it the summary so the site reads that instead.
-  async function readWithSiteVoice(el, text) {
+  async function readWithSiteVoice(el, out) {
     if (adapter.rewritable) {
-      const out = await interpret(text);
       // "full" = keep the site's own text; the hook only adds the prefix.
       sendTts({ prefix: prefixFor(cfg.lang), override: out.via === "model" ? out.text : null, lang: out.lang });
     }
@@ -396,14 +559,48 @@
     return clickSiteReadAloud(el);
   }
 
+  async function waitForSitePlayback() {
+    const startBy = Date.now() + 8000;
+    while (Date.now() < startBy) {
+      if (Player.state("site").active) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!Player.state("site").active) return;
+    const endBy = Date.now() + 15 * 60 * 1000;
+    while (Date.now() < endBy && Player.state("site").active) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+
   Chat.watch({
     async onComplete(text, _key, el) {
       if (!active()) return;
-      if (cfg.chatVoiceMode === "site" && await readWithSiteVoice(el, text)) return;
-      const out = await interpret(text);
-      if (!active()) return;
-      const prefix = prefixFor(out.lang);
-      own.speak(prefix ? `${prefix} ${out.text}` : out.text, out.lang);
+      const ticket = audioQueue.enqueue();
+      try { globalThis.YapStats?.record(text, adapter.id); } catch (_) {}
+      try {
+        if (cfg.chatVoiceMode === "site") {
+          const out = adapter.rewritable
+            ? await interpret(text)
+            : { text, lang: await detectLang(text), via: "full" };
+          // ChatGPT and Grok send only a response id to their TTS endpoint, so
+          // their text cannot be rewritten. Speak the mandatory identity first,
+          // then hand the answer to the site's original voice.
+          const announce = adapter.rewritable ? null : await own.prepare(prefixFor(out.lang), out.lang);
+          if (!active() || !(await ticket.ready())) return;
+          if (announce) await announce();
+          if (!active()) return;
+          if (await readWithSiteVoice(el, out)) await waitForSitePlayback();
+          return;
+        }
+
+        const out = await interpret(text);
+        const prefix = prefixFor(out.lang);
+        const play = await own.prepare(`${prefix} ${out.text}`, out.lang);
+        if (!active() || !(await ticket.ready())) return;
+        await play();
+      } finally {
+        ticket.done();
+      }
     }
   });
 })();

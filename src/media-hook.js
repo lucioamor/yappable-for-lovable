@@ -65,10 +65,18 @@
       const el = target;
       const cap = capture && el === capture.el;
       const dur = cap ? capture.samples / capture.sampleRate : (el && el.duration);
+      // An element the site dropped (emptied / failed / never loaded) is not a
+      // reading in progress: without this the modal stays "active" on a dead element.
+      const dead = !!el && (!!el.error || (el.paused && el.readyState === 0 && !cap));
+      const finished = !!el && el.ended && !(cap && capture.streaming());
+      // "playing" = sound is really coming out (not paused, not buffering, not
+      // ended). The modal animates its waveform only on this, never on "active".
+      const playing = !!el && !el.paused && !el.ended && el.readyState >= 3 && !dead;
       window.postMessage({
         [OUT]: true,
         state: el ? {
-          active: !userStopped && !(el.ended && !(cap && capture.streaming())),
+          active: !userStopped && !finished && !dead,
+          playing,
           paused: el.paused,
           t: el.currentTime || 0,
           dur: Number.isFinite(dur) ? dur : 0,
@@ -80,7 +88,8 @@
     });
   }
 
-  const EVENTS = ["play", "pause", "ratechange", "timeupdate", "ended", "durationchange", "seeked"];
+  const EVENTS = ["play", "pause", "ratechange", "timeupdate", "ended", "durationchange", "seeked",
+    "playing", "waiting", "stalled", "canplay", "emptied", "abort", "error"];
   // A new site audio element takes over the controls, and the previous one is
   // paused so two replies never play at once (the old one would be unreachable).
   // Exception: if the old element is still playing, wait a moment and only take

@@ -14,7 +14,7 @@ Yappable for Lovable: voice mode that reads chat & talks back
 ## Short description (max 132 chars)
 
 ```
-Lovable extension that talks back: reads every build aloud — what changed, why it matters, next steps. Hands-free voice updates.
+Voice mode for Lovable, ChatGPT, Claude, Gemini & Grok: reads every reply aloud, hands-free. Native or ElevenLabs voices.
 ```
 
 ---
@@ -169,6 +169,15 @@ generation.
 
 ─────────────────────────────────────────────
 
+🌐 NOW ON CHATGPT, CLAUDE, GEMINI AND GROK TOO
+
+Turn on any platform from the Platforms tab. When a reply finishes, Yappable
+announces which LLM is speaking and reads it aloud — with your browser voice, ElevenLabs
+(one voice per LLM), or the site's own voice. Replies from different tabs play in
+completion order and never overlap; a floating player in each tab gives play/pause,
+seek, speed and the "Up next" queue.
+
+─────────────────────────────────────────────
 🧩 EVERYTHING ELSE
 
 ✔️ Animated waveform bar while speaking — visual confirmation it's running
@@ -187,7 +196,7 @@ generation.
 Everything runs in your browser by default. Native speech, on-device AI
 summaries, and on-device translation never send your Lovable data anywhere.
 
-The extension activates only on lovable.dev. It requests only the permissions
+The extension activates only on Lovable, ChatGPT, Claude, Gemini, and Grok. It requests only the permissions
 it actually needs. No background tracking, no analytics, no data collection.
 
 If you use ElevenLabs: only the final cleaned narration text is sent — not
@@ -228,26 +237,13 @@ Lovable moves fast. Yappable makes sure you do too. 🚀
 
 ---
 
-## What's new (v1.0.0)
+## What's new (v1.3.0)
 
-**Speaks your language, narrates live — now stable.**
+**Talks back on ChatGPT, Claude, Gemini and Grok too — one voice at a time.**
 
-- 🌍 **Always in your language** — narration, live progress, and alerts are
-  translated on-device to the language you choose, no matter what Lovable
-  replies in.
-- 🎬 **Live play-by-play** — verbose mode reads the background-task widget step
-  by step as it happens, skipping near-duplicates, instead of waiting for the
-  final response.
-- 🔊 **Knows what Lovable is doing** — the silence monitor reads the real status
-  word ("Transcribing", "Generating") with elapsed time and task label.
-- 👋 **First-run onboarding** — clean full-screen setup: drop in an ElevenLabs
-  key (verified on the spot) for premium voice, or continue on the built-in
-  native voice in one click.
-- 🎚️ **Voice & engine overhaul** — Native / ElevenLabs badge in the popup,
-  language flag pill, native voices filtered to your language, better
-  ElevenLabs defaults.
-- 📊 **Animated waveform bar**, **↩ repeat button**, and **instant stop** across
-  every Lovable tab.
-- 🛠️ **Stability & polish** — transparent toolbar icon, network timeouts so
-  setup and audio never get stuck, a native-narration stall fix, locally
-  bundled language flags (works offline), and a dependency-free QA suite.
+- 🗣️ **Narrates every LLM** — each reply starts by saying which LLM is speaking (concise or casual intro).
+- 🔗 **One voice at a time across tabs** — replies queue in completion order; a new one pauses, never cuts, the current one.
+- 🎛️ **Floating player in every chat tab** — play/pause, seek, speed, shortcuts (Alt+K), and "Up next" queue.
+- 🗂️ **Compact Platforms tab** — on/off and an ElevenLabs voice per LLM, in one tidy list.
+- ⏹️ **Smarter Stop button** — grey when idle, red only while something is speaking.
+- 📊 **Waveform that only moves with real sound**, plus daily stats (words, minutes, narrations).

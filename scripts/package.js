@@ -17,7 +17,6 @@ const outFile = path.join(root, `yappable-for-lovable-${version}.zip`);
 const include = [
   "manifest.json",
   "rules.json",
-  "_metadata",
   "src",
   "popup",
   "icons",
@@ -31,10 +30,10 @@ if (fs.existsSync(outFile)) fs.unlinkSync(outFile);
 const existing = include.filter((p) => fs.existsSync(path.join(root, p)));
 
 if (process.platform === "win32") {
-  // PowerShell Compress-Archive — available on all modern Windows
+  // PowerShell 7 keeps project paths and filenames UTF-8 safe.
   const psItems = existing.map((p) => `"${path.join(root, p)}"`).join(",");
   execSync(
-    `powershell -NoProfile -Command "Compress-Archive -Path ${psItems} -DestinationPath '${outFile}'"`,
+    `pwsh -NoProfile -Command "Compress-Archive -Path ${psItems} -DestinationPath '${outFile}'"`,
     { cwd: root, stdio: "inherit" }
   );
 } else {

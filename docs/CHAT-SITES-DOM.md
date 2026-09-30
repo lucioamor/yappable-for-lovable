@@ -108,7 +108,8 @@ Two things differ from the other sites, and both were learned the hard way:
 
 `readAloud`: press `More actions` (⋯, `aria-label` is English even in the PT UI) with pointerdown/mousedown/pointerup/mouseup + click (a bare `.click()` doesn't open Radix menus; verified), then click the `[role=menuitem]` "Ler em voz alta". While reading, that item says "Parar de ler", so only the idle label matches and a second run can't stop the audio.
 
-Grok cannot be rewritten (no text in the request), so Site mode reads its full reply with no prefix. The Yappable voice adds "Resposta do Grok:".
+Grok cannot be rewritten (no text in the request). In Site mode Yappable therefore speaks the
+mandatory identity first, then starts Grok's original voice for the full reply.
 
 Because the audio stream is not seekable, `media-hook.js` now reports `seekable` in its state (a finite `seekable.end(0) > 0`), ignores `seek` commands otherwise, and the player greys out −15/+15. This applies to any site whose element isn't seekable.
 
@@ -128,9 +129,29 @@ Probed 2026-09-28 by wrapping `fetch`, XHR and `WebSocket` in the page and click
 `media-hook.js` rewrites the text on Claude and Gemini (`cmd: "tts"`):
 - **prefix** ("Resposta do Claude:") is added to every read, including the user's own clicks on the site's button. It is localized from the extension language (pt, en, es, fr, de, it).
 - **override** (the on-device summary, when `mode` isn't `completo`) replaces the text for the next read only, and expires after 60 s. On Claude the extra `text_chunk` frames of a replaced read are dropped. On Gemini the locale becomes the summary language.
-- ChatGPT can't be rewritten, so its Site mode reads the full reply with no prefix. Yappable mode adds the prefix on all three.
+- ChatGPT and Grok can't be rewritten. In Site mode Yappable speaks the mandatory identity with
+  its configured/system voice first, then starts the site's original voice for the full reply.
 
 Verified live: Claude sent `Resposta do Claude: <summary>` and played. Gemini sent `Resposta do Gemini: …` with lang `pt-BR` and produced 10.8 s of audio for the summary. With only the prefix, Gemini's audio grew from 14.7 s to 17.9 s.
+
+### Can the id-only sites read a user message? (probed 2026-09-29)
+
+Hypothesis: a user message is stored verbatim, so asking the TTS for the **user** message id would read arbitrary text on ChatGPT and Grok. Method: a temporary/private chat with the prompt "Atenção: reunião de equipe em dez minutos, levem o relatório trimestral. (responda apenas: ok)", then the site's own read-aloud click with the request's id swapped for the user message id (the site's own auth, no token handling), plus an unswapped control.
+
+| Site | User message id | Control (assistant id) |
+|---|---|---|
+| chatgpt.com (`/backend-api/synthesize`) | **403** `{"detail":{"message":"Message cannot be read","code":"message_not_eligible"}}` | 200 `audio/aac`, 3255 bytes |
+| grok.com (`read-response-audio-file/<id>`) | **500**, empty body, `<audio>` error 4 | 200 `audio/wav`, 37 964 bytes, 0.79 s ("Okay") |
+
+**Refuted on both.** ChatGPT rejects non-eligible messages explicitly. Grok also refuses, but with a generic 500 (looks like an unhandled case rather than validation; a 403/404 would be cleaner). So only Claude and Gemini accept arbitrary text.
+
+Side notes from this probe:
+- ChatGPT ids in the DOM: the user turn has `data-chatgpt-search-unit-key="…:user"` and `data-chatgpt-search-message-ids=<uuid>`. `data-message-id` / `data-message-author-role` are gone. The adapter already uses `data-chatgpt-selection-message-id`, so it is unaffected.
+- Grok user turns also carry `div#response-<uuid>` (with `[data-testid=user-message]`), same scheme as assistant replies.
+
+### Perplexity (probed 2026-09-29, Pro, PT-BR UI)
+
+**No read-aloud on the web.** The reply action bar has Copiar, Compartilhar, Útil, Não útil, Bifurcar and ⋯ (Baixar, Reescrever). The composer has only "Ditado" (speech-to-text). No TTS strings in the 89 loaded scripts (~600 KB). Logged out, a query returns "Cadastre-se e repita sua solicitação" with the same menu. TTS may exist in the mobile app, Comet or live voice mode (not checked).
 
 ## Native read-aloud (site TTS)
 
@@ -158,6 +179,17 @@ On ChatGPT the button lookup mapped 3 of 3 replies to their own buttons. Rate, s
 - **Modal (`src/player-ui.js`, shadow DOM):** Site/Yappable toggle, −15 / play-pause / +15 / stop, and speed 0.5–3× in 0.25 steps. The speed is persisted as `playerRate` and applies to every source.
 - **Shortcuts:** Alt+K (play/pause), Alt+J (−15 s), Alt+L (+15 s), Alt+, (slower), Alt+. (faster), Alt+0 (1×), Esc (stop while playing).
 - **System-voice limits:** seeking works at chunk granularity (~220 chars), because speech has no timeline. The position also only moves per chunk when the voice emits no boundary events, as Google voices don't.
+
+## Cross-tab audio ordering (v1.2)
+
+- Each completed ChatGPT, Claude, Gemini, or Grok reply is enqueued immediately through a long-lived
+  port to `background.js`. Queue order is therefore completion-observation order, not TTS download order.
+- The head becomes playable only after interpretation and any ElevenLabs MP3 generation finish.
+  Later ready jobs cannot bypass it. This lets ElevenLabs pre-generate while another tab speaks.
+- The active job releases the next job only after native, ElevenLabs, or site playback ends. A
+  20-second heartbeat keeps the MV3 coordinator alive during long reads.
+- Chrome's `audible` tab filter is only a restart-recovery guard for already-playing supported tabs;
+  it is not a random backoff or the normal ordering mechanism.
 
 ## Review fixes (PR #6)
 
