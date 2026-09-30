@@ -8,3 +8,9 @@ Thumbs.db
 # Local agent + backups (not for public repo)
 .claude/
 .icons (old, sem transparencia)/
+
+# Private lessons learned (kept local, never published)
+LESSONS-LEARNED.md
+
+# Build output (npm run package)
+*.zip

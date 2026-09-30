@@ -1,6 +1,14 @@
 (() => {
   "use strict";
 
+  // Logger estruturado (src/logger.js, injetado antes deste). Fallback no-op
+  // defensivo caso o módulo falhe ao carregar — nunca deixa o log derrubar a fala.
+  const _noop = () => {};
+  const L = globalThis.YapLog || {
+    ok: _noop, info: _noop, fallback: _noop, fail: _noop,
+    start: () => _noop, isOn: () => false, dump: () => [], clear: _noop
+  };
+
   // ---------------------------------------------------------------------------
   // Config (sincronizada com a página de opções via chrome.storage.sync)
   // ---------------------------------------------------------------------------
@@ -40,7 +48,6 @@
     elevenSimilarity: 0.2, // similarity_boost 0–1
     elevenStyle: 0.5, // style exaggeration 0–1 (v2+)
     elevenSpeed: 1.1, // velocidade (ElevenLabs aceita 0.7–1.2)
-    elevenSpeakerBoost: true, // use_speaker_boost
     elevenTextNormalization: "on", // auto | on | off
     elevenSeedRandom: true, // true = sem seed fixo
     elevenSeed: null // seed determinístico 0–4294967295
@@ -97,9 +104,18 @@
 
     // elevenKey and debug live in storage.local (credentials off sync; debug not
     // roamed). Load them only after sync so callback order can never erase a key.
-    chrome.storage.local.get({ elevenKey: "", debug: false }, (local) => {
-      cfg.elevenKey = local.elevenKey || legacyElevenKey;
+    // Phase 5: also read auth for the credential value (auth takes precedence).
+    chrome.storage.local.get({ elevenKey: "", debug: false, auth: null }, (local) => {
+      const authKey = local.auth && local.auth.providers && local.auth.providers.elevenlabs
+        && local.auth.providers.elevenlabs.credential && local.auth.providers.elevenlabs.credential.value;
+      cfg.elevenKey = authKey || local.elevenKey || legacyElevenKey;
       cfg.debug = !!local.debug;
+
+      L.info("config", "load", "config carregada", {
+        engine: cfg.engine, lang: cfg.lang, mode: cfg.mode,
+        hasElevenKey: !!cfg.elevenKey, verbose: cfg.verboseEnabled,
+        waveform: cfg.waveformEnabled, cue: cfg.cueEnabled, errorAlert: cfg.errorAlertEnabled
+      });
 
       // Migration is copy-then-delete. Never delete the legacy key until the
       // local write succeeds, otherwise an update can silently lose credentials.
@@ -114,7 +130,17 @@
   });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local") {
-      if (changes.elevenKey) cfg.elevenKey = changes.elevenKey.newValue || "";
+      // Phase 5: auth credential takes precedence over legacy elevenKey
+      if (changes.auth) {
+        const auth = changes.auth.newValue;
+        const authKey = auth && auth.providers && auth.providers.elevenlabs
+          && auth.providers.elevenlabs.credential && auth.providers.elevenlabs.credential.value;
+        if (authKey !== undefined) {
+          cfg.elevenKey = authKey || cfg.elevenKey;
+          _sessionVerified = false; // key changed — re-verify next TTS call
+        }
+      }
+      if (changes.elevenKey && !changes.auth) cfg.elevenKey = changes.elevenKey.newValue || "";
       if (changes.debug) cfg.debug = !!changes.debug.newValue;
       return;
     }
@@ -156,6 +182,108 @@
   let currentCue = null;   // <audio> do som de cue (p/ garantir 1 áudio por vez)
   let currentFetchController = null; // aborta geração ElevenLabs ao desligar/parar
   let playbackEpoch = 0;   // invalida awaits antigos quando a fala é interrompida
+
+  const audioOwnerId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const AUDIO_LOCK_KEY = "yapAudioLock";
+  const AUDIO_LOCK_TTL_MS = 2 * 60 * 1000;
+  const AUDIO_LOCK_POLL_MS = 250;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  function errorInfo(err) {
+    if (err == null) return err;
+    if (err instanceof Error) return { error: err.name || "Error", message: String(err.message || err) };
+    if (typeof DOMException !== "undefined" && err instanceof DOMException) {
+      return { error: err.name || "DOMException", message: String(err.message || err) };
+    }
+    if (typeof err === "object") {
+      const name = err.name || err.error;
+      const message = err.message || err.reason;
+      if (name || message) return { error: String(name || "Error"), message: String(message || err) };
+    }
+    return { error: typeof err, message: String(err) };
+  }
+
+  function modelText(out) {
+    if (typeof out === "string") return out;
+    if (!out || typeof out !== "object") return "";
+    if (typeof out.text === "string") return out.text;
+    if (typeof out.output === "string") return out.output;
+    if (typeof out.content === "string") return out.content;
+    if (typeof out.result === "string") return out.result;
+    return "";
+  }
+
+  function storageLocalGet(defaults) {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.storage.local.get(defaults, (st) => {
+          if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+          else resolve(st || {});
+        });
+      } catch (err) { reject(err); }
+    });
+  }
+
+  function storageLocalSet(patch) {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.storage.local.set(patch, () => {
+          if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+          else resolve();
+        });
+      } catch (err) { reject(err); }
+    });
+  }
+
+  function storageLocalRemove(key) {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.storage.local.remove(key, () => {
+          if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+          else resolve();
+        });
+      } catch (err) { reject(err); }
+    });
+  }
+
+  async function acquireAudioSlot(epoch) {
+    while (playbackCurrent(epoch)) {
+      let lock = null;
+      const now = Date.now();
+      try {
+        const st = await storageLocalGet({ [AUDIO_LOCK_KEY]: null });
+        lock = st[AUDIO_LOCK_KEY];
+      } catch (_) { return true; }
+      if (!lock || !lock.owner || lock.owner === audioOwnerId || Number(lock.expiresAt || 0) <= now) {
+        const mine = { owner: audioOwnerId, expiresAt: now + AUDIO_LOCK_TTL_MS };
+        try {
+          await storageLocalSet({ [AUDIO_LOCK_KEY]: mine });
+          const check = await storageLocalGet({ [AUDIO_LOCK_KEY]: null });
+          if (check[AUDIO_LOCK_KEY] && check[AUDIO_LOCK_KEY].owner === audioOwnerId) return true;
+        } catch (_) { return true; }
+      }
+      await sleep(AUDIO_LOCK_POLL_MS);
+    }
+    return false;
+  }
+
+  async function releaseAudioSlot() {
+    try {
+      const st = await storageLocalGet({ [AUDIO_LOCK_KEY]: null });
+      const lock = st[AUDIO_LOCK_KEY];
+      if (lock && lock.owner === audioOwnerId) await storageLocalRemove(AUDIO_LOCK_KEY);
+    } catch (_) {}
+  }
+
+  async function refreshAudioSlot() {
+    try {
+      const st = await storageLocalGet({ [AUDIO_LOCK_KEY]: null });
+      const lock = st[AUDIO_LOCK_KEY];
+      if (lock && lock.owner === audioOwnerId) {
+        await storageLocalSet({ [AUDIO_LOCK_KEY]: { owner: audioOwnerId, expiresAt: Date.now() + AUDIO_LOCK_TTL_MS } });
+      }
+    } catch (_) {}
+  }
 
   // ---------------------------------------------------------------------------
   // Waveform de telemetria (Web Audio API) — barra animada no topo do chat
@@ -253,6 +381,13 @@
       if (_wfAudioCtx.state !== "running") {
         _wfAnalyser = null;
         _wfDrawSimulated();
+        // Este é EXATAMENTE o cenário "vejo a waveform mas não ouço nada": o
+        // contexto não destravou (sem gesto na página), então NÃO roteamos —
+        // a barra é simulada e o <audio> toca direto. Se mesmo assim ficar
+        // mudo, a falha está no autoplay do elemento, não no roteamento.
+        L.fallback("playback", "_wfStartEleven", "AudioContext não-running: waveform simulada, áudio direto", {
+          audioCtxState: _wfAudioCtx.state, audioUnlocked, routed: false
+        });
         return;
       }
       const src = _wfAudioCtx.createMediaElementSource(audioEl);
@@ -261,9 +396,13 @@
       src.connect(_wfAnalyser);
       _wfAnalyser.connect(_wfAudioCtx.destination);
       _wfDrawReal();
-    } catch (_) {
+      L.ok("playback", "_wfStartEleven", "áudio roteado pelo AudioContext (waveform real)", {
+        audioCtxState: _wfAudioCtx.state, routed: true
+      });
+    } catch (err) {
       _wfAnalyser = null;
       _wfDrawSimulated();
+      L.fail("playback", "_wfStartEleven", "falha ao rotear áudio; waveform simulada", { err });
     }
   }
 
@@ -276,6 +415,23 @@
 
   function _audioCacheKey(text, vSettings) {
     return JSON.stringify({ t: text, ...vSettings });
+  }
+
+  // Phase 5: update auth.providers.elevenlabs.status in storage.local.
+  // Best-effort: silent on any storage failure.
+  let _sessionVerified = false;
+  function _setAuthStatus(status) {
+    try {
+      chrome.storage.local.get({ auth: null }, (st) => {
+        if (chrome.runtime.lastError || !st.auth || !st.auth.providers || !st.auth.providers.elevenlabs) return;
+        const auth = JSON.parse(JSON.stringify(st.auth));
+        auth.providers.elevenlabs.status = status;
+        if (status === "valid" && auth.providers.elevenlabs.credential) {
+          auth.providers.elevenlabs.credential.lastVerifiedAt = Date.now();
+        }
+        chrome.storage.local.set({ auth });
+      });
+    } catch (_) {}
   }
 
   // para tudo: limpa fila, cancela TTS nativo e o áudio ElevenLabs atual
@@ -330,27 +486,58 @@
     speaking = true;
     const epoch = playbackEpoch;
     const { text, el, meta } = queue.shift();
+    let hasAudioSlot = false;
+    let completed = false;
+    let lockRefresh = null;
     try {
+      hasAudioSlot = await acquireAudioSlot(epoch);
+      if (!hasAudioSlot || !playbackCurrent(epoch)) return;
+      lockRefresh = setInterval(refreshAudioSlot, 30000);
       // Cue faz parte do MESMO slot da fila: nada toca por cima dele e ele
       // nunca toca em paralelo com outra fala.
       if (meta && meta.cue) {
         await playCue(epoch);
         if (!playbackCurrent(epoch)) return;
       }
-      // Motor é absoluto: ElevenLabs (com key) narra tudo; senão, nativa.
-      const useEleven = cfg.engine === "elevenlabs" && cfg.elevenKey;
-      if (useEleven) await speakEleven(text, epoch);
-      else await speakNative(text);
+      // Phase 4: provider chain — tries each provider in order until one succeeds.
+      // Native is always last so it acts as the unconditional final fallback.
+      const chain = buildProviderChain();
+      L.info("engine", "drain", "motor escolhido para o item", {
+        engine: chain[0].id, chain: chain.map((p) => p.id).join("→"),
+        kind: meta && meta.kind, chars: text.length
+      });
+      for (let _pi = 0; _pi < chain.length; _pi++) {
+        try {
+          await chain[_pi].synthesize(text, epoch);
+          break; // success — stop trying
+        } catch (_perr) {
+          if (!playbackCurrent(epoch)) return;
+          if (_pi + 1 < chain.length) {
+            L.fallback("engine", "drain", `${chain[_pi].id} falhou; tentando ${chain[_pi + 1].id}`, { err: _perr });
+            _wfHide();
+          } else {
+            throw _perr; // all providers exhausted — outer catch handles
+          }
+        }
+      }
     } catch (err) {
       if (!playbackCurrent(epoch)) return;
-      console.warn("[Yappable] speech failed, native fallback:", err);
+      L.fail("engine", "drain", "todos os provedores na cadeia falharam", { err });
       _wfHide();
-      try { await speakNative(text); } catch (_) {}
+    } finally {
+      if (playbackCurrent(epoch)) {
+        completed = true;
+        if (meta && meta.kind === "final") {
+          markRead(el); // narração terminou: rosa escuro
+          // Phase 1: close the trace run — all pipeline events for this narration are in
+          if (L.setRunId) L.setRunId(null);
+        }
+      }
+      if (lockRefresh) clearInterval(lockRefresh);
+      if (hasAudioSlot) await releaseAudioSlot();
+      speaking = false;
+      if (completed) drain();
     }
-    if (!playbackCurrent(epoch)) return;
-    if (meta && meta.kind === "final") markRead(el); // narração terminou: rosa escuro
-    speaking = false;
-    drain();
   }
 
   // --- TTS nativo (Web Speech API) ---
@@ -419,8 +606,16 @@
         else resolve();
       };
       u.onend = () => finish();
-      u.onerror = (e) => finish(e.error || new Error("speech error"));
-      u.onstart = () => { started = true; };
+      u.onerror = (e) => {
+        L.fail("playback", "speakNative", "erro na síntese nativa", { error: String(e.error || "speech error") });
+        finish(e.error || new Error("speech error"));
+      };
+      u.onstart = () => {
+        started = true;
+        L.ok("playback", "speakNative", "voz nativa iniciada", {
+          voice: (v && v.name) || "(auto)", lang: u.lang, rate: u.rate, volume: u.volume, chars: text.length
+        });
+      };
       // keepalive: Chrome corta fala >~15s; pause+resume evita o corte e o restart
       keepAlive = setInterval(() => {
         // Chrome occasionally stops without firing onend/onerror. Once speech
@@ -439,6 +634,18 @@
     });
   }
 
+  // Phase 4: build provider chain based on active engine config.
+  // Returns an array of { id, synthesize(text, epoch) } in priority order.
+  // Native is always the final fallback; earlier providers are tried first.
+  function buildProviderChain() {
+    const providers = [];
+    if (cfg.engine === "elevenlabs" && cfg.elevenKey) {
+      providers.push({ id: "elevenlabs", synthesize: (text, epoch) => speakEleven(text, epoch) });
+    }
+    providers.push({ id: "native", synthesize: (text) => speakNative(text) });
+    return providers;
+  }
+
   // --- TTS ElevenLabs ---
   async function speakEleven(text, epoch) {
     const ELEVEN_FETCH_TIMEOUT_MS = 30000;
@@ -450,7 +657,9 @@
       style: cfg.elevenStyle,
       // ElevenLabs só aceita speed em 0.7–1.2; fora disso a API devolve 400.
       speed: clamp(cfg.elevenSpeed, 0.7, 1.2),
-      use_speaker_boost: cfg.elevenSpeakerBoost
+      // Speaker boost fixo em false (não vem mais de config): melhora a latência
+      // do ElevenLabs. NÃO reintroduzir como opção configurável nem remover esta linha.
+      use_speaker_boost: false
     };
     const body = {
       text: sendText,
@@ -473,9 +682,19 @@
     });
     let audioBuffer = _audioCache.get(cacheKey);
     if (!audioBuffer) {
+      // Params de geração (sem a chave — header redatado pelo logger de toda forma).
+      const endDbg = L.start("engine", "speakEleven", "POST text-to-speech (ElevenLabs)", {
+        voiceId: cfg.elevenVoiceId, model: cfg.elevenModel, format: fmtParam,
+        lang: body.language_code || null, chars: sendText.length
+      });
       const controller = new AbortController();
       currentFetchController = controller;
-      const timeout = setTimeout(() => controller.abort(), ELEVEN_FETCH_TIMEOUT_MS);
+      let fetchTimedOut = false;
+      const timeout = setTimeout(() => {
+        fetchTimedOut = true;
+        try { controller.abort(new Error("ElevenLabs request timed out")); }
+        catch (_) { controller.abort(); }
+      }, ELEVEN_FETCH_TIMEOUT_MS);
       let res;
       try {
         res = await fetch(
@@ -492,6 +711,10 @@
           }
         );
         if (!res.ok) {
+          // Phase 5: map HTTP status to auth state machine transitions
+          if (res.status === 401) _setAuthStatus("invalid");
+          else if (res.status === 429) _setAuthStatus("quota_exceeded");
+          else _setAuthStatus("network_error");
           let detail = "";
           try { detail = (await res.text()).slice(0, 300); } catch (_) {}
           throw new Error(`ElevenLabs ${res.status}${detail ? `: ${detail}` : ""}`);
@@ -499,10 +722,20 @@
         // Keep the timeout active while consuming the body as well. A server can
         // send headers and then stall before the MP3 is complete.
         audioBuffer = await res.arrayBuffer();
+        endDbg("ok", { status: res.status, bytes: audioBuffer.byteLength });
+        // Phase 5: mark key as verified on first successful TTS per session
+        if (!_sessionVerified) { _sessionVerified = true; _setAuthStatus("valid"); }
       } catch (err) {
-        if (controller.signal.aborted && playbackCurrent(epoch)) {
+        const aborted = controller.signal.aborted || (err && err.name === "AbortError");
+        if (aborted && epoch != null && !playbackCurrent(epoch)) {
+          endDbg("info", { reason: "stale-playback-abort", aborted: true });
+          return;
+        }
+        if ((fetchTimedOut || aborted) && playbackCurrent(epoch)) {
+          endDbg("fail", { reason: "timeout", timeoutMs: ELEVEN_FETCH_TIMEOUT_MS, err: errorInfo(err) });
           throw new Error("ElevenLabs request timed out");
         }
+        endDbg("fail", { err: errorInfo(err), aborted });
         throw err;
       } finally {
         clearTimeout(timeout);
@@ -512,6 +745,10 @@
         _audioCache.delete(_audioCache.keys().next().value);
       }
       _audioCache.set(cacheKey, audioBuffer);
+    } else {
+      L.info("engine", "speakEleven", "áudio servido do cache (sem chamada de rede)", {
+        bytes: audioBuffer.byteLength, chars: sendText.length
+      });
     }
     if (epoch != null && !playbackCurrent(epoch)) return;
 
@@ -523,13 +760,49 @@
       audio = new Audio(url);
       currentAudio = audio; // ref global p/ stopSpeaking()
       audio.volume = cfg.volume;
-      const playbackTimeoutMs = clamp(text.length * 250, 60000, 30 * 60 * 1000);
+      audio.preload = "auto";
+      const START_TIMEOUT_MS = 15000;
+      const estimatedPlaybackMs = clamp(text.length * 180 + 5000, 10000, 30 * 60 * 1000);
       let settled = false;
+      let started = false;
       let playbackTimeout = null;
+      let startTimeout = null;
+      const clearTimers = () => {
+        clearTimeout(startTimeout);
+        clearTimeout(playbackTimeout);
+      };
+      const armPlaybackTimeout = () => {
+        clearTimeout(playbackTimeout);
+        const durationMs = Number.isFinite(audio.duration) && audio.duration > 0
+          ? audio.duration * 1000 + 8000
+          : estimatedPlaybackMs;
+        playbackTimeout = setTimeout(() => {
+          L.fallback("playback", "speakEleven", "audio ElevenLabs excedeu o tempo de reprodução", {
+            timeoutMs: Math.round(durationMs), duration: audio.duration || null,
+            currentTime: audio.currentTime || 0, readyState: audio.readyState, networkState: audio.networkState
+          });
+          finish(new Error("ElevenLabs audio playback timed out"));
+        }, durationMs);
+      };
+      const noteStarted = () => {
+        if (started || settled) return;
+        started = true;
+        clearTimeout(startTimeout);
+        _wfStartEleven(audio);
+        armPlaybackTimeout();
+        L.ok("playback", "speakEleven", "audio ElevenLabs tocando", {
+          bytes: audioBuffer.byteLength, volume: audio.volume, muted: audio.muted
+        });
+      };
       const finish = (err) => {
         if (settled) return;
         settled = true;
-        clearTimeout(playbackTimeout);
+        clearTimers();
+        audio.onended = null;
+        audio.onplaying = null;
+        audio.onloadedmetadata = null;
+        audio.onpause = null;
+        audio.onerror = null;
         _wfHide();
         if (err) {
           try { audio.pause(); audio.currentTime = 0; } catch (_) {}
@@ -537,19 +810,35 @@
         }
         else resolve();
       };
-      playbackTimeout = setTimeout(
-        () => finish(new Error("ElevenLabs audio playback timed out")),
-        playbackTimeoutMs
-      );
-      _wfStartEleven(audio);
+      startTimeout = setTimeout(() => {
+        L.fallback("playback", "speakEleven", "audio ElevenLabs não iniciou a tempo", {
+          timeoutMs: START_TIMEOUT_MS, readyState: audio.readyState,
+          networkState: audio.networkState, paused: audio.paused
+        });
+        finish(new Error("ElevenLabs audio start timed out"));
+      }, START_TIMEOUT_MS);
       audio.onended = () => finish();
+      audio.onplaying = noteStarted;
+      audio.onloadedmetadata = () => {
+        if (started) armPlaybackTimeout();
+      };
       audio.onpause = () => {
         if (epoch != null && !playbackCurrent(epoch)) {
           finish();
         }
       };
-      audio.onerror = () => finish(new Error("audio play error"));
-      audio.play().catch((err) => finish(err));
+      audio.onerror = () => {
+        if (settled) return;
+        L.fail("playback", "speakEleven", "erro ao tocar áudio ElevenLabs", {
+          code: audio.error && audio.error.code, volume: audio.volume
+        });
+        finish(new Error("audio play error"));
+      };
+      audio.play().then(noteStarted).catch((err) => {
+        if (settled) return;
+        L.fail("playback", "speakEleven", "audio.play() rejeitado", { err: errorInfo(err), volume: audio.volume });
+        finish(err);
+      });
     }).finally(() => { URL.revokeObjectURL(url); if (currentAudio === audio) currentAudio = null; });
   }
 
@@ -752,8 +1041,9 @@
     const body = copyAttr
       ? cleanBlockText(copyAttr)
       : (proseEl ? cleanBlockText(proseEl.innerText) : "");
+    const bodySource = copyAttr ? "data-message-copy-text" : (proseEl ? ".prose-chat innerText" : "none");
     const structure = readProseStructure(proseEl);
-    return { titleEl, taskTitle, proseEl, body, structure };
+    return { titleEl, taskTitle, proseEl, body, structure, bodySource };
   }
 
   // detecta se a mensagem é uma resposta do Lovable JÁ concluída e ainda não
@@ -882,7 +1172,7 @@
   const FAST_START_MAX_DELAY = 100;
   // No fallback genérico (sem padrão reconhecido) não há resumo determinístico
   // bom; aí vale ESPERAR o Nano um pouco mais (a fala atrasa só nesse caso).
-  const NANO_TIMEOUT = 2500;
+  const NANO_TIMEOUT = 6000;
   const NANO_MIN_LEN = 220; // texto curto já é falável; Nano só agrega em texto longo
   // Limite de tamanho é responsabilidade do PROMPT (o modelo gera curto e
   // completo). NUNCA cortamos o texto depois de gerado — cropping mutila a
@@ -986,11 +1276,12 @@
         summarizer = await Summarizer.create(base); // build sem dicas de idioma
       }
       _summarizerLang = cfg.lang;
+      L.ok("warmup", "warmupSummarizer", "Summarizer/Nano pronto", { lang: _summarizerLang });
     } catch (err) {
       // NÃO marca summarizerDead aqui: create() pode falhar por falta de user
       // activation (download exige gesto). Deixa o unlock() tentar de novo no 1º
       // clique. "unavailable"/sem-API (acima) é que são permanentes.
-      console.warn("[Yappable] Summarizer not ready yet (retry on first gesture):", err);
+      L.fallback("warmup", "warmupSummarizer", "Summarizer ainda não pronto (re-tenta no 1º gesto)", { err });
     } finally {
       summarizerWarming = false;
     }
@@ -1009,10 +1300,11 @@
       const s = await self.LanguageModel.create(); // dispara download/init
       try { s.destroy(); } catch (_) {}
       promptModelReady = true;
+      L.ok("warmup", "warmupPromptModel", "Prompt API pronto");
     } catch (err) {
       // create() pode falhar por falta de user activation (download exige gesto).
       // Não marca dead: o 1º clique (unlock) re-tenta. "unavailable" acima é permanente.
-      console.warn("[Yappable] Prompt API not ready yet (retry on first gesture):", err);
+      L.fallback("warmup", "warmupPromptModel", "Prompt API ainda não pronto (re-tenta no 1º gesto)", { err });
     } finally {
       promptModelWarming = false;
     }
@@ -1048,9 +1340,9 @@
         session.prompt(text),
         new Promise((_, rej) => setTimeout(() => rej(new Error("prompt timeout")), NANO_TIMEOUT))
       ]);
-      return cleanText(out) || null;
+      return cleanText(modelText(out)) || null;
     } catch (err) {
-      console.warn("[Yappable] Prompt API failed, fallback:", err);
+      L.fallback("interpret", "runMode", "Prompt API falhou; cai no próximo fallback", { mode, err });
       return null;
     } finally {
       if (session) { try { session.destroy(); } catch (_) {} }
@@ -1124,9 +1416,9 @@
       ]);
       // SEM cropping pós-geração: o limite vive no prompt. O que o modelo
       // devolver inteiro é o que será falado inteiro.
-      return cleanText(out) || null;
+      return cleanText(modelText(out)) || null;
     } catch (err) {
-      console.warn("[Yappable] Nano failed, keeping deterministic:", err);
+      L.fallback("interpret", "summarizeWithNano", "Nano falhou; mantém determinístico", { err });
       return null;
     }
   }
@@ -1152,7 +1444,13 @@
     mode = normalizeMode(mode != null ? mode : cfg.mode);
     const label = await projectLabel();
 
-    if (mode === "completo") return deterministic(result, mode, label);
+    if (mode === "completo") {
+      const out = deterministic(result, mode, label);
+      L.ok("interpret", "buildSpeech", "modo completo: leitura íntegra determinística", {
+        mode, inChars: (result.body || "").length, outChars: out.length, source: "deterministic"
+      });
+      return out;
+    }
 
     const source = cleanForNarration(result.body || "", "natural");
     // fast vale mesmo curto (pode ser só "quer que eu implemente?"); os resumos
@@ -1162,14 +1460,31 @@
     if (source && longEnough) {
       if (promptModelAvailable()) {
         const out = await runMode(mode, source);
-        if (out) { lastSummarizerStatus = "prompt"; return label + out; }
+        if (out) {
+          lastSummarizerStatus = "prompt";
+          L.ok("interpret", "buildSpeech", "texto falável gerado (Prompt API)", {
+            mode, inChars: source.length, outChars: out.length, source: "prompt"
+          });
+          return label + out;
+        }
       }
       if ((mode === "beginner" || mode === "advanced") && source.length >= NANO_MIN_LEN && nanoUsable()) {
         const nano = await summarizeWithNano(source);
-        if (nano) { lastSummarizerStatus = "nano"; return label + nano; }
+        if (nano) {
+          lastSummarizerStatus = "nano";
+          L.ok("interpret", "buildSpeech", "texto falável gerado (Summarizer/Nano)", {
+            mode, inChars: source.length, outChars: nano.length, source: "nano"
+          });
+          return label + nano;
+        }
       }
     }
-    return deterministic(result, mode, label);
+    const out = deterministic(result, mode, label);
+    L.fallback("interpret", "buildSpeech", "sem LLM disponível; render determinístico", {
+      mode, inChars: source.length, outChars: out.length, source: "deterministic",
+      promptReady: promptModelAvailable(), nanoUsable: nanoUsable(), longEnough
+    });
+    return out;
   }
 
   function observedText(result) {
@@ -1381,6 +1696,13 @@
     const key = msgKey(result);
     if (spoken.get(result.id) === key) return; // mesmo id+texto já narrado
     spoken.set(result.id, key);
+    // Phase 1: open a new trace run; every event in this pipeline shares this runId
+    if (L.setRunId) L.setRunId(L.genRunId ? L.genRunId() : null);
+    L.ok("dom", "commitNarrate", "conclusão detectada e aceita para narrar", {
+      id: result.id, bodySource: result.bodySource,
+      taskTitleChars: (result.taskTitle || "").length, bodyChars: (result.body || "").length,
+      reload: !!prefix
+    });
     narrationToken++;
     stopSpeaking(); // mata fila/áudio/TTS anterior: só a última sobrevive
     // Sinaliza ao monitor de silêncio que a conclusão foi detectada.
@@ -1424,7 +1746,14 @@
   const VERBOSE_MIN_INTERVAL = 5000; // mín. 5s entre leituras de progresso (layout antigo)
 
   // Cabeçalhos de ação genéricos: não valem uma leitura sozinhos.
-  const RE_PROGRESS_NOISE = /^(working|thinking|loading|thought.*)\.{0,3}$/i;
+  const RE_PROGRESS_NOISE = /^(working|trabalhando|thinking|pensando|loading|carregando|thought.*)\s*:?\s*\.{0,3}$/i;
+  const RE_PROGRESS_LEAD = /^(?:current task|tarefa atual)?\s*:?\s*(?:working|trabalhando|thinking|pensando|loading|carregando)\s*:?\s*/i;
+
+  function stripProgressLead(s) {
+    const t = cleanText(s).replace(/^[\s:]+/, "");
+    const out = cleanText(t.replace(RE_PROGRESS_LEAD, ""));
+    return out || t;
+  }
 
   // Widget novo de "background task" (barra flutuante acima do #chat-input).
   // Vive FORA da mensagem do agente, então o varredor de mensagem não o alcança.
@@ -1444,7 +1773,7 @@
     const btn = [...scope.querySelectorAll("li button")].pop();
     if (!btn) return null;
     const muted = btn.querySelector("span.text-muted-foreground");
-    let desc = muted ? cleanText(muted.textContent).replace(/^[\s:]+/, "") : "";
+    let desc = muted ? stripProgressLead(muted.textContent) : "";
     if (desc && RE_PROGRESS_NOISE.test(desc)) desc = "";
     // título = wrapper do texto, descontando o trecho muted da descrição
     const wrap = muted ? muted.parentElement : btn.querySelector("span.truncate");
@@ -1452,7 +1781,10 @@
     if (wrap) {
       const clone = wrap.cloneNode(true);
       clone.querySelectorAll("span.text-muted-foreground").forEach((n) => n.remove());
-      title = cleanText(clone.textContent);
+      const rawTitle = cleanText(clone.textContent);
+      const titleText = stripProgressLead(rawTitle);
+      if (!desc && titleText && titleText !== rawTitle) desc = titleText;
+      else title = titleText;
     }
     if (title && RE_PROGRESS_NOISE.test(title)) title = "";
     return (title || desc) ? { title, desc } : null;
@@ -1478,8 +1810,8 @@
       .map((s) => cleanText(s.innerText || s.textContent))
       .filter(Boolean);
     if (texts.length) {
-      const desc = texts.length > 1 ? texts[texts.length - 1] : "";
-      const action = texts[0];
+      const desc = texts.length > 1 ? stripProgressLead(texts[texts.length - 1]) : "";
+      const action = stripProgressLead(texts[0]);
       if (desc && !RE_PROGRESS_NOISE.test(desc)) return desc;
       if (action && !RE_PROGRESS_NOISE.test(action)) return action;
       return null;
@@ -1489,12 +1821,13 @@
         taskBtn.getAttribute("title") ||
         (taskBtn.getAttribute("aria-label") || "").replace(/^Open background task:\s*/i, "")
       );
-      if (title && !RE_PROGRESS_NOISE.test(title)) return title;
+      const cleanTitle = stripProgressLead(title);
+      if (cleanTitle && !RE_PROGRESS_NOISE.test(cleanTitle)) return cleanTitle;
     }
     // layout antigo: linha descritiva no header expandido
     const statusEl = m.querySelector("p.text-muted-foreground.line-clamp-1");
     const status = statusEl ? cleanText(statusEl.innerText || statusEl.textContent) : "";
-    return status || null;
+    return stripProgressLead(status) || null;
   }
 
   // Enfileira um snippet transiente (progresso/monitor). Descarta transientes
@@ -1556,12 +1889,15 @@
         session.prompt(t),
         new Promise((_, rej) => setTimeout(() => rej(new Error("translate timeout")), NANO_TIMEOUT))
       ]);
-      const res = cleanText(out) || text;
+      const res = cleanText(modelText(out)) || text;
       if (_i18nCache.size >= I18N_CACHE_MAX) _i18nCache.delete(_i18nCache.keys().next().value);
       _i18nCache.set(key, res);
+      L.ok("translate", "localizeLine", "linha traduzida para o idioma do usuário", {
+        lang, inChars: t.length, outChars: res.length, changed: res !== t
+      });
       return res;
     } catch (err) {
-      console.warn("[Yappable] translate failed, verbatim:", err);
+      L.fallback("translate", "localizeLine", "tradução falhou; fala verbatim (idioma da tela)", { lang, err: errorInfo(err) });
       return text;
     } finally {
       if (session) { try { session.destroy(); } catch (_) {} }
@@ -1573,13 +1909,33 @@
   // epoch (não fala progresso depois que a conclusão final preemptou via
   // stopSpeaking). Mantém o single-slot do enqueueVerbose.
   let verboseSeq = 0;
+  let verboseLocalizeTimer = null;
+  let verbosePending = null;
+  const VERBOSE_LOCALIZE_DEBOUNCE_MS = 250;
+
   function enqueueVerboseLocalized(text) {
     const token = ++verboseSeq;
     const epoch = playbackEpoch;
-    localizeLine(text).then((out) => {
-      if (token !== verboseSeq || epoch !== playbackEpoch) return;
-      enqueueVerbose(out);
-    });
+    const cleaned = cleanText(text);
+    L.info("dom", "verbose", "progresso lido da tela", { chars: cleaned.length, preview: cleaned.slice(0, 100) });
+    verbosePending = { text, token, epoch };
+    if (verboseLocalizeTimer) clearTimeout(verboseLocalizeTimer);
+    verboseLocalizeTimer = setTimeout(() => {
+      verboseLocalizeTimer = null;
+      const pending = verbosePending;
+      verbosePending = null;
+      if (!pending || pending.token !== verboseSeq || pending.epoch !== playbackEpoch) {
+        L.info("dom", "verbose", "snippet de progresso descartado (estado obsoleto)", {});
+        return;
+      }
+      localizeLine(pending.text).then((out) => {
+        if (pending.token !== verboseSeq || pending.epoch !== playbackEpoch) {
+          L.info("dom", "verbose", "snippet de progresso descartado (estado obsoleto)", {});
+          return;
+        }
+        enqueueVerbose(out);
+      });
+    }, VERBOSE_LOCALIZE_DEBOUNCE_MS);
   }
 
   // Traduz e enfileira uma fala ONE-SHOT (frase fixa do sistema: monitor de
@@ -1597,6 +1953,9 @@
   // a cada mudança, sem repetir o rótulo.
   let lastTaskTitle = "";
   let lastTaskDesc = "";
+  let lastTaskSpokenKey = "";
+  let lastTaskSpokenAt = 0;
+  const TASK_REPEAT_SUPPRESS_MS = 10000;
 
   // Jaccard sobre palavras significativas (>2 chars). Retorna 0..1.
   function descSimilarity(a, b) {
@@ -1610,6 +1969,35 @@
     return inter / (wa.size + wb.size - inter);
   }
 
+  function progressKey(title, desc) {
+    return cleanText([title, desc].filter(Boolean).join(" | ")).toLowerCase();
+  }
+
+  function progressLabel(title, desc) {
+    return cleanText(desc || title || "");
+  }
+
+  function speakProgress(text, key, stillLabel) {
+    const now = Date.now();
+    if (key && key === lastTaskSpokenKey) {
+      if (now - lastTaskSpokenAt < TASK_REPEAT_SUPPRESS_MS) return false;
+      text = `Still working on ${stillLabel}.`;
+    }
+    lastTaskSpokenKey = key || cleanText(text).toLowerCase();
+    lastTaskSpokenAt = now;
+    enqueueVerboseLocalized(text);
+    return true;
+  }
+
+  function speakStillProgress(key, label) {
+    const now = Date.now();
+    if (now - lastTaskSpokenAt < TASK_REPEAT_SUPPRESS_MS) return false;
+    lastTaskSpokenKey = key;
+    lastTaskSpokenAt = now;
+    enqueueVerboseLocalized(`Still working on ${label}.`);
+    return true;
+  }
+
   // Narra o widget novo. Título novo -> anuncia a tarefa uma vez (com a 1ª
   // descrição junta, num único enfileiramento — dropTransient descartaria um 2º).
   // Mesma tarefa, descrição mudou -> lê só a descrição, se for suficientemente
@@ -1617,17 +2005,26 @@
   // ritmo já é dado pela fila (um item por vez) + single-slot (só o estado mais
   // recente sobrevive enquanto a fala anterior toca).
   function narrateTaskWidget(w) {
+    const key = progressKey(w.title, w.desc);
+    const label = progressLabel(w.title, w.desc);
     if (w.title && w.title !== lastTaskTitle) {
       lastTaskTitle = w.title;
       lastTaskDesc = w.desc || "";
       const lead = `Current task: ${w.title}.`;
-      enqueueVerboseLocalized(w.desc ? `${lead} ${w.desc}` : lead);
+      speakProgress(w.desc ? `${lead} ${w.desc}` : lead, key, label || w.title);
+      return;
+    }
+    if (key && key === lastTaskSpokenKey) {
+      speakProgress(label, key, label);
       return;
     }
     if (w.desc && w.desc !== lastTaskDesc) {
-      if (lastTaskDesc && descSimilarity(w.desc, lastTaskDesc) >= 0.65) return;
+      if (lastTaskDesc && descSimilarity(w.desc, lastTaskDesc) >= 0.65) {
+        speakStillProgress(key, label);
+        return;
+      }
       lastTaskDesc = w.desc;
-      enqueueVerboseLocalized(w.desc);
+      speakProgress(w.desc, key, label);
     }
   }
 
@@ -1642,12 +2039,17 @@
     if (lastTaskTitle || lastTaskDesc) { lastTaskTitle = ""; lastTaskDesc = ""; }
     // layout antigo (task dentro da mensagem): mantém o throttle de 30s.
     const snippet = extractProgress();
-    if (!snippet || snippet === lastVerbose) return;
+    if (!snippet) return;
+    const snippetKey = progressKey("", snippet);
+    if (snippet === lastVerbose) {
+      speakProgress(snippet, snippetKey, snippet);
+      return;
+    }
     // throttle: no máx. 1 leitura de progresso a cada 30s (evita tagarelar)
     if (Date.now() - lastVerboseAt < VERBOSE_MIN_INTERVAL) return;
     lastVerbose = snippet;
     lastVerboseAt = Date.now();
-    enqueueVerboseLocalized(snippet);
+    speakProgress(snippet, snippetKey, snippet);
   }
 
   // ---------------------------------------------------------------------------
@@ -1703,6 +2105,9 @@
 
   function onErrorDetected(toast) {
     const detail = errorDetailText(toast);
+    L.info("error", "onErrorDetected", "toast de erro do Lovable detectado (Try to fix)", {
+      detailChars: detail.length, detailPreview: detail.slice(0, 120)
+    });
     const phrase = "Attention. Lovable encountered an error and stopped. " +
       "It won't continue on its own — click Try to fix.";
     playErrorChime();
@@ -1888,6 +2293,16 @@
       // (o popup acabou de gravar). Evita narrar com o modo anterior.
       if (message.mode != null) cfg.mode = normalizeMode(message.mode);
       sendResponse({ ok: narrateLastNow() });
+      return false;
+    }
+    if (message?.type === "LN_GET_LOGS") {
+      // Dump do buffer em memória desta aba (fonte fresca para download).
+      sendResponse({ logs: L.dump(), debug: !!cfg.debug });
+      return false;
+    }
+    if (message?.type === "LN_CLEAR_LOGS") {
+      L.clear();
+      sendResponse({ ok: true });
       return false;
     }
     return false;

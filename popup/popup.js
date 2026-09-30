@@ -23,7 +23,6 @@ const DEFAULTS = {
   elevenSimilarity: 0.2,
   elevenStyle: 0.5,
   elevenSpeed: 1.1,
-  elevenSpeakerBoost: true,
   elevenTextNormalization: "on",
   elevenSeedRandom: true,
   elevenSeed: null
@@ -77,7 +76,7 @@ const GROUPS = {
   native: ["nativeVoice", "rate", "pitch", "volume"],
   eleven: [
     "elevenModel", "elevenOutputFormat", "elevenStability", "elevenSimilarity",
-    "elevenStyle", "elevenSpeed", "elevenSpeakerBoost",
+    "elevenStyle", "elevenSpeed",
     "elevenTextNormalization", "elevenSeedRandom", "elevenSeed"
   ]
 };
@@ -96,9 +95,21 @@ const LEGACY_TO_MODE = {
 const normalizeMode = (m) =>
   (MODES.includes(m) ? m : (LEGACY_TO_MODE[m] || DEFAULTS.mode));
 
+// Logger estruturado (src/logger.js, carregado antes deste no popup.html).
+// Fallback no-op se ausente. As operações do popup entram no MESMO store
+// (yapLogs) e aparecem no download junto com content e background.
+const L = globalThis.YapLog || {
+  ok() {}, info() {}, fallback() {}, fail() {}, start: () => () => {},
+  isOn: () => false, dump: () => [], clear() {}
+};
+
 const $ = (id) => document.getElementById(id);
 const msg = (t) => { $("msg").textContent = t || ""; };
 const fmt = (v, digits) => digits === 0 ? String(Math.round(v)) : Number(v).toFixed(digits);
+// Mostra valor interno (0–1) como percentual. Não altera o valor salvo.
+const fmtPct = (v) => Math.round(Number(v) * 100) + "%";
+// Speed: percentual relativo a 100% (1.0). Ex.: 0.9 -> "-10%", 1.2 -> "+20%". Não altera o valor salvo.
+const fmtSpeedPct = (v) => { const d = Math.round((Number(v) - 1) * 100); return (d > 0 ? "+" : "") + d + "%"; };
 
 let cfg = { ...DEFAULTS };
 let lastOutput = null;
@@ -108,6 +119,29 @@ function set(key, value) {
   // elevenKey and debug stored in local (credentials + debug state off sync).
   if (key === "elevenKey" || key === "debug") {
     chrome.storage.local.set({ [key]: value });
+    // Phase 5: mirror elevenKey into the auth credential object
+    if (key === "elevenKey") {
+      chrome.storage.local.get({ auth: null }, (st) => {
+        if (chrome.runtime.lastError) return;
+        const authBase = st.auth || {
+          v: 1, activeEngine: cfg.engine || "native",
+          providers: { elevenlabs: { credential: null, status: "unconfigured", account: null, voices: [], voicesAt: null } }
+        };
+        const auth = JSON.parse(JSON.stringify(authBase));
+        if (!auth.providers) auth.providers = {};
+        if (!auth.providers.elevenlabs) auth.providers.elevenlabs = { credential: null, status: "unconfigured" };
+        const prev = auth.providers.elevenlabs.credential;
+        auth.providers.elevenlabs.credential = value ? {
+          type: "apiKey", value,
+          addedAt: (prev && prev.addedAt) || Date.now(),
+          lastVerifiedAt: null
+        } : null;
+        auth.providers.elevenlabs.status = value ? "unverified" : "unconfigured";
+        cfg._authStatus = auth.providers.elevenlabs.status;
+        chrome.storage.local.set({ auth });
+        reflectKeyStatus();
+      });
+    }
   } else {
     chrome.storage.sync.set({ [key]: value });
   }
@@ -139,9 +173,10 @@ const bindNumber = (id) => $(id).addEventListener("change", () => {
   const raw = $(id).value;
   set(id, raw === "" ? null : Number(raw));
 });
-function bindRange(id, outId, digits = 2) {
+function bindRange(id, outId, fmtArg = 2) {
   const el = $(id);
-  el.addEventListener("input", () => { $(outId).textContent = fmt(el.value, digits); });
+  const fmtFn = typeof fmtArg === "function" ? fmtArg : (v) => fmt(v, fmtArg);
+  el.addEventListener("input", () => { $(outId).textContent = fmtFn(el.value); });
   el.addEventListener("change", () => set(id, Number(el.value)));
 }
 
@@ -214,6 +249,7 @@ function triggerNarrateNow() {
   if (!chrome.tabs?.query) return;
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
     if (!tab?.id) return;
+    L.info("popup", "triggerNarrateNow", "pedido de re-narração enviado à aba", { mode: normalizeMode(cfg.mode) });
     chrome.tabs.sendMessage(
       tab.id,
       { type: "LN_NARRATE_NOW", mode: normalizeMode(cfg.mode) },
@@ -276,13 +312,223 @@ $("brandTitle").addEventListener("click", () => {
   _dbgTimer = setTimeout(() => { _dbgClicks = 0; }, 2000);
   if (_dbgClicks >= 5) {
     _dbgClicks = 0;
-    const next = !cfg.debug;
-    set("debug", next);
-    cfg.debug = next;
-    $("debugPanel").hidden = !next;
-    msg(next ? "🔧 Debug on" : "Debug off");
+    setDebug(!cfg.debug);
+    msg(cfg.debug ? "🔧 Debug on" : "Debug off");
     setTimeout(() => msg(""), 2000);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Diagnostics: debug toggle + download (TXT + JSONL) + clear
+// ---------------------------------------------------------------------------
+const LOG_STORE_KEY = "yapLogs";
+const BCUMB_KEY = "yapBreadcrumbs"; // Phase 3: always-on fail ring
+
+function isLogEntry(e) {
+  return !!e && typeof e === "object" && typeof e.iso === "string" &&
+    typeof e.stage === "string" && typeof e.hook === "string";
+}
+
+function logDedupeKey(e) {
+  return `${e.ctx || ""}|${e.seq || ""}|${e.iso}`;
+}
+
+function setDebug(next) {
+  set("debug", next);
+  cfg.debug = next;
+  $("debug").checked = next;
+  $("debugPanel").hidden = !next;
+  if (next) refreshLogCount();
+}
+
+$("debug").addEventListener("change", () => {
+  setDebug($("debug").checked);
+  msg($("debug").checked ? "🔧 Debug logging on" : "Debug logging off");
+  setTimeout(() => msg(""), 1800);
+});
+
+// Buffer em memória da aba Lovable ativa (fonte mais fresca do pipeline de fala).
+function getLiveLogs(cb) {
+  if (!chrome.tabs?.query) return cb([]);
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    if (!tab?.id) return cb([]);
+    chrome.tabs.sendMessage(tab.id, { type: "LN_GET_LOGS" }, (resp) => {
+      if (chrome.runtime.lastError || !resp) return cb([]);
+      cb(resp.logs || []);
+    });
+  });
+}
+
+// Complete view: merge live tab buffer + persisted storage (all contexts) +
+// Phase 3 breadcrumbs. Dedupe by ctx|seq|iso, sort chronologically.
+function gatherAllLogs(cb) {
+  chrome.storage.local.get({ [LOG_STORE_KEY]: [], [BCUMB_KEY]: [] }, (st) => {
+    const stored = Array.isArray(st[LOG_STORE_KEY]) ? st[LOG_STORE_KEY].filter(isLogEntry) : [];
+    const breadcrumbs = Array.isArray(st[BCUMB_KEY]) ? st[BCUMB_KEY].filter(isLogEntry) : [];
+    getLiveLogs((live) => {
+      const liveLogs = Array.isArray(live) ? live.filter(isLogEntry) : [];
+      const map = new Map();
+      for (const e of stored) map.set(logDedupeKey(e), e);
+      for (const e of liveLogs) map.set(logDedupeKey(e), e);
+      // Phase 3: include breadcrumbs not already present in the trace
+      for (const e of breadcrumbs) {
+        const k = logDedupeKey(e);
+        if (!map.has(k)) map.set(k, e);
+      }
+      const all = [...map.values()].sort((a, b) =>
+        ((Number(a.t) || 0) - (Number(b.t) || 0)) ||
+        ((Number(a.seq) || 0) - (Number(b.seq) || 0))
+      );
+      cb(all, liveLogs.length ? "live+stored" : "stored", breadcrumbs);
+    });
+  });
+}
+
+function refreshLogCount() {
+  gatherAllLogs((logs, _origin, breadcrumbs) => {
+    const el = $("logCount");
+    const bcTxt = breadcrumbs && breadcrumbs.length ? ` + ${breadcrumbs.length} crumbs` : "";
+    if (el) el.textContent = logs.length ? `${logs.length} entries${bcTxt}` : "no logs yet";
+  });
+}
+
+// Phase 2: compute derived metrics from log entries.
+function computeMetrics(logs) {
+  const runs = new Map();
+  for (const e of logs) {
+    if (!e.runId) continue;
+    if (!runs.has(e.runId)) runs.set(e.runId, { failed: false });
+    if (e.outcome === "fail") runs.get(e.runId).failed = true;
+  }
+  const totalRuns = runs.size;
+  const failedRuns = [...runs.values()].filter((r) => r.failed).length;
+  const fallbackByStage = {}, totalByStage = {};
+  for (const e of logs) {
+    if (!e.stage) continue;
+    totalByStage[e.stage] = (totalByStage[e.stage] || 0) + 1;
+    if (e.outcome === "fallback") fallbackByStage[e.stage] = (fallbackByStage[e.stage] || 0) + 1;
+  }
+  const fallbackRateByStage = {};
+  for (const [stage, cnt] of Object.entries(fallbackByStage)) {
+    fallbackRateByStage[stage] = Math.round(cnt / (totalByStage[stage] || 1) * 100) / 100;
+  }
+  function percentiles(values) {
+    if (!values.length) return null;
+    const s = [...values].sort((a, b) => a - b);
+    return { p50: s[Math.floor(s.length * 0.5)], p95: s[Math.floor(s.length * 0.95)] };
+  }
+  const elevenMs = logs.filter((e) => e.hook === "speakEleven" && e.ms != null).map((e) => e.ms);
+  const localMs = logs.filter((e) => e.hook === "localizeLine" && e.ms != null).map((e) => e.ms);
+  const latencyMs = {};
+  const ep = percentiles(elevenMs); if (ep) latencyMs.speakEleven = ep;
+  const lp = percentiles(localMs); if (lp) latencyMs.localizeLine = lp;
+  const mutedButAnimating = logs.filter(
+    (e) => e.hook === "_wfStartEleven" && e.detail && e.detail.routed === false
+  ).length;
+  return { runs: totalRuns, failedRuns, fallbackRateByStage, latencyMs, mutedButAnimating };
+}
+
+// Phase 2: JSONL export — one JSON per line, auto-descriptive header, metrics block.
+function formatLogsAsJsonl(logs) {
+  const extVer = (chrome.runtime && chrome.runtime.getManifest
+    ? chrome.runtime.getManifest().version : "?");
+  // Credential status snapshot (redacted — key value never included)
+  const credStatus = (cfg._authStatus) || (cfg.elevenKey ? "unverified" : "unconfigured");
+  const header = {
+    schema: "yappable-log",
+    v: 2,
+    exportedAt: new Date().toISOString(),
+    extensionVersion: extVer,
+    userAgent: navigator.userAgent,
+    credentialStatus: credStatus,
+    fields: ["v", "runId", "parentId", "seq", "t", "iso", "ctx", "stage", "hook", "action", "outcome", "detail", "ms", "source"]
+  };
+  const lines = [JSON.stringify(header)];
+  for (const e of logs) lines.push(JSON.stringify(e));
+  const metrics = computeMetrics(logs);
+  lines.push(JSON.stringify({ metrics }));
+  return lines.join("\n") + "\n";
+}
+
+// Legacy TXT format (kept for human-readable copy-paste).
+function formatLogs(logs) {
+  const head = [
+    "Yappable diagnostic log",
+    `generated: ${new Date().toISOString()}`,
+    `entries: ${logs.length}`,
+    "format: [ISO] [run:ID] STAGE/hook · action → OUTCOME  {detail}",
+    "—".repeat(60)
+  ].join("\n");
+  const lines = logs.map((e) => {
+    const ms = e.ms != null ? ` (${e.ms}ms)` : "";
+    const ctx = e.ctx ? ` [${e.ctx}]` : "";
+    const run = e.runId ? ` [run:${e.runId}]` : "";
+    const src = e.source ? ` [${e.source}]` : "";
+    const detail = e.detail && Object.keys(e.detail).length ? "  " + JSON.stringify(e.detail) : "";
+    return `[${e.iso}]${ctx}${run}${src} ${e.stage}/${e.hook} \xb7 ${e.action} → ${String(e.outcome).toUpperCase()}${ms}${detail}`;
+  });
+  return head + "\n" + lines.join("\n") + "\n";
+}
+
+function triggerDownload(content, mimeType, filename) {
+  const url = URL.createObjectURL(new Blob([content], { type: mimeType }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+$("downloadLogs").addEventListener("click", () => {
+  gatherAllLogs((logs, origin) => {
+    if (!logs.length) {
+      msg(cfg.debug ? "No logs captured yet." : "Turn on Debug logging first.");
+      setTimeout(() => msg(""), 2500);
+      return;
+    }
+    const text = formatLogs(logs);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    triggerDownload(text, "text/plain", `yappable-log-${stamp}.txt`);
+    msg(`Downloaded ${logs.length} entries (${origin}).`);
+    setTimeout(() => msg(""), 2500);
+  });
+});
+
+// Phase 2: JSONL download button
+if ($("downloadLogsJsonl")) {
+  $("downloadLogsJsonl").addEventListener("click", () => {
+    gatherAllLogs((logs, origin) => {
+      if (!logs.length) {
+        msg(cfg.debug ? "No logs captured yet." : "Turn on Debug logging first.");
+        setTimeout(() => msg(""), 2500);
+        return;
+      }
+      const jsonl = formatLogsAsJsonl(logs);
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      triggerDownload(jsonl, "application/x-ndjson", `yappable-log-${stamp}.jsonl`);
+      msg(`Downloaded ${logs.length} entries as JSONL (${origin}).`);
+      setTimeout(() => msg(""), 2500);
+    });
+  });
+}
+
+$("clearLogs").addEventListener("click", () => {
+  // Phase 3: also clear breadcrumb ring
+  chrome.storage.local.remove([LOG_STORE_KEY, BCUMB_KEY]);
+  if (chrome.tabs?.query) {
+    chrome.tabs.query({ url: "https://lovable.dev/*" }, (tabs) => {
+      for (const tab of tabs || []) {
+        if (!tab?.id) continue;
+        chrome.tabs.sendMessage(tab.id, { type: "LN_CLEAR_LOGS" }, () => void chrome.runtime.lastError);
+      }
+    });
+  }
+  const el = $("logCount");
+  if (el) el.textContent = "no logs yet";
+  msg("Logs cleared.");
+  setTimeout(() => msg(""), 1800);
 });
 
 // ---------------------------------------------------------------------------
@@ -325,16 +571,33 @@ document.addEventListener("click", () => { $("langList").hidden = true; });
 // ---------------------------------------------------------------------------
 // Settings modal
 // ---------------------------------------------------------------------------
+// Phase 5: auth status labels
+const AUTH_STATUS_LABELS = {
+  unconfigured: "No API key",
+  unverified: "Configured",
+  verifying: "Verifying…",
+  valid: "Verified ✓",
+  invalid: "Invalid key",
+  quota_exceeded: "Quota exceeded",
+  network_error: "Network error"
+};
+
 function reflectKeyStatus() {
   const has = !!cfg.elevenKey;
-  $("keyDot").classList.toggle("ok", has);
-  $("keyTxt").textContent = has ? "Configured" : "No API key";
+  const status = cfg._authStatus || (has ? "unverified" : "unconfigured");
+  const isOk = status === "valid";
+  const isBad = ["invalid", "quota_exceeded", "network_error"].includes(status);
+  const dot = $("keyDot");
+  dot.classList.toggle("ok", isOk);
+  dot.classList.toggle("bad", isBad);
+  $("keyTxt").textContent = AUTH_STATUS_LABELS[status] || (has ? "Configured" : "No API key");
   $("keyAffiliate").hidden = has;
 }
 $("openSettings").addEventListener("click", () => {
   $("elevenKey").value = cfg.elevenKey;
   $("elevenKey").type = "password";
   $("settingsModal").hidden = false;
+  refreshLogCount();
 });
 $("settingsClose").addEventListener("click", () => { $("settingsModal").hidden = true; });
 $("settingsModal").addEventListener("click", (e) => { if (e.target === $("settingsModal")) $("settingsModal").hidden = true; });
@@ -347,6 +610,7 @@ $("elevenKey").addEventListener("change", () => {
   const changed = k !== cfg.elevenKey;
   set("elevenKey", k);
   reflectKeyStatus();
+  L.info("config", "elevenKey", "chave ElevenLabs atualizada", { hasKey: !!k, changed });
   if (k && changed) loadElevenVoices(true);
   else if (k) loadElevenVoices(false);
 });
@@ -445,12 +709,15 @@ function loadElevenVoices(force) {
       return;
     }
     msg("Loading voices…");
+    const endDbg = L.start("engine", "loadElevenVoices", "GET /v1/voices (ElevenLabs)", { force });
     try {
       const voices = await fetchElevenVoices();
       chrome.storage.local.set({ [VOICE_CACHE_KEY]: { key: cfg.elevenKey, at: Date.now(), voices } });
       populateElevenVoices(voices);
+      endDbg("ok", { count: voices.length });
       msg(`${voices.length} voices cached.`);
     } catch (e) {
+      endDbg("fail", { err: e });
       msg("Failed to load voices: " + e.message);
     }
   });
@@ -500,9 +767,9 @@ function reflectUI() {
   reflectEngine();
   document.querySelectorAll('input[name="mode"]').forEach((r) => { r.checked = r.value === normalizeMode(cfg.mode); });
   $("cueEnabled").checked = cfg.cueEnabled;
-  $("cueVolume").value = cfg.cueVolume; $("cueVolumeOut").textContent = fmt(cfg.cueVolume, 2);
+  $("cueVolume").value = cfg.cueVolume; $("cueVolumeOut").textContent = fmtPct(cfg.cueVolume);
   $("errorAlertEnabled").checked = cfg.errorAlertEnabled;
-  $("errorVolume").value = cfg.errorVolume; $("errorVolumeOut").textContent = fmt(cfg.errorVolume, 2);
+  $("errorVolume").value = cfg.errorVolume; $("errorVolumeOut").textContent = fmtPct(cfg.errorVolume);
   $("verboseEnabled").checked = cfg.verboseEnabled;
   $("waveformEnabled").checked = cfg.waveformEnabled;
   $("delayMs").value = cfg.delayMs; $("delayMsOut").textContent = fmt(cfg.delayMs, 0);
@@ -516,11 +783,10 @@ function reflectUI() {
   // eleven
   $("elevenModel").value = cfg.elevenModel;
   $("elevenOutputFormat").value = cfg.elevenOutputFormat;
-  $("elevenStability").value = cfg.elevenStability; $("stabOut").textContent = fmt(cfg.elevenStability, 2);
-  $("elevenSimilarity").value = cfg.elevenSimilarity; $("simOut").textContent = fmt(cfg.elevenSimilarity, 2);
-  $("elevenStyle").value = cfg.elevenStyle; $("styleOut").textContent = fmt(cfg.elevenStyle, 2);
-  $("elevenSpeed").value = cfg.elevenSpeed; $("elevenSpeedOut").textContent = fmt(cfg.elevenSpeed, 2);
-  $("elevenSpeakerBoost").checked = cfg.elevenSpeakerBoost;
+  $("elevenStability").value = cfg.elevenStability; $("stabOut").textContent = fmtPct(cfg.elevenStability);
+  $("elevenSimilarity").value = cfg.elevenSimilarity; $("simOut").textContent = fmtPct(cfg.elevenSimilarity);
+  $("elevenStyle").value = cfg.elevenStyle; $("styleOut").textContent = fmtPct(cfg.elevenStyle);
+  $("elevenSpeed").value = cfg.elevenSpeed; $("elevenSpeedOut").textContent = fmtSpeedPct(cfg.elevenSpeed);
   $("elevenTextNormalization").value = cfg.elevenTextNormalization;
   $("elevenSeedRandom").checked = cfg.elevenSeedRandom;
   $("elevenSeed").value = cfg.elevenSeed == null ? "" : cfg.elevenSeed;
@@ -528,7 +794,8 @@ function reflectUI() {
   reflectKeyStatus();
   updateReadDebug();
 
-  // debug panel visibility
+  // debug panel + toggle visibility
+  $("debug").checked = cfg.debug;
   $("debugPanel").hidden = !cfg.debug;
 }
 
@@ -553,9 +820,15 @@ function load() {
 
     // Resolve local data after sync. This prevents a slower sync callback from
     // overwriting the credential that a faster local callback just loaded.
-    chrome.storage.local.get([LAST_OUTPUT_KEY, "elevenKey", "debug"], (local) => {
+    chrome.storage.local.get([LAST_OUTPUT_KEY, "elevenKey", "debug", "auth"], (local) => {
       lastOutput = local[LAST_OUTPUT_KEY] || null;
-      cfg.elevenKey = local.elevenKey || legacyElevenKey;
+      // Phase 5: prefer auth credential; fall back to legacy elevenKey
+      const auth = local.auth;
+      const authKey = auth && auth.providers && auth.providers.elevenlabs
+        && auth.providers.elevenlabs.credential && auth.providers.elevenlabs.credential.value;
+      cfg.elevenKey = authKey || local.elevenKey || legacyElevenKey;
+      cfg._authStatus = auth && auth.providers && auth.providers.elevenlabs
+        && auth.providers.elevenlabs.status || null;
       cfg.debug = !!local.debug;
 
       buildLangDropdown();
@@ -595,8 +868,19 @@ chrome.storage.onChanged.addListener((changes, area) => {
       cfg.elevenKey = changes.elevenKey.newValue || "";
       reflectKeyStatus();
     }
+    // Phase 5: sync auth status and credential from storage changes
+    if (changes.auth) {
+      const auth = changes.auth.newValue;
+      const authKey = auth && auth.providers && auth.providers.elevenlabs
+        && auth.providers.elevenlabs.credential && auth.providers.elevenlabs.credential.value;
+      if (authKey !== undefined) cfg.elevenKey = authKey || cfg.elevenKey;
+      cfg._authStatus = auth && auth.providers && auth.providers.elevenlabs
+        && auth.providers.elevenlabs.status || null;
+      reflectKeyStatus();
+    }
     if (changes.debug) {
       cfg.debug = !!changes.debug.newValue;
+      $("debug").checked = cfg.debug;
       $("debugPanel").hidden = !cfg.debug;
     }
   }
@@ -648,7 +932,6 @@ bindToggle("cueEnabled");
 bindToggle("errorAlertEnabled");
 bindToggle("verboseEnabled");
 bindToggle("waveformEnabled");
-bindToggle("elevenSpeakerBoost");
 bindToggle("elevenSeedRandom");
 bindSelect("nativeVoice");
 bindSelect("elevenVoiceId");
@@ -656,16 +939,16 @@ bindSelect("elevenModel");
 bindSelect("elevenOutputFormat");
 bindSelect("elevenTextNormalization");
 bindNumber("elevenSeed");
-bindRange("cueVolume", "cueVolumeOut", 2);
-bindRange("errorVolume", "errorVolumeOut", 2);
+bindRange("cueVolume", "cueVolumeOut", fmtPct);
+bindRange("errorVolume", "errorVolumeOut", fmtPct);
 bindRange("delayMs", "delayMsOut", 0);
 bindRange("rate", "rateOut", 2);
 bindRange("pitch", "pitchOut", 2);
 bindRange("volume", "volumeOut", 2);
-bindRange("elevenStability", "stabOut", 2);
-bindRange("elevenSimilarity", "simOut", 2);
-bindRange("elevenStyle", "styleOut", 2);
-bindRange("elevenSpeed", "elevenSpeedOut", 2);
+bindRange("elevenStability", "stabOut", fmtPct);
+bindRange("elevenSimilarity", "simOut", fmtPct);
+bindRange("elevenStyle", "styleOut", fmtPct);
+bindRange("elevenSpeed", "elevenSpeedOut", fmtSpeedPct);
 
 $("elevenSeedRandom").addEventListener("change", reflectSeed);
 $("refreshVoices").addEventListener("click", () => loadElevenVoices(true));
