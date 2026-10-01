@@ -16,7 +16,17 @@ By default, Yappable uses native browser speech. The Chrome Built-in AI / Gemini
 
 Yappable does not load remote scripts, remote stylesheets, or remote fonts.
 
+## Local Audio Cache and History
+
+When ElevenLabs is enabled, generated audio is cached in this browser (IndexedDB, up to 50 MB). If narration
+history is on, the cache also keeps each narrated text, voice, time and the Lovable page address (without query
+string). This stays on your device and is never sent to the developer. You can turn the cache or history off,
+delete single items, or clear everything in Settings. Removing the extension deletes it.
+
 ## Optional ElevenLabs Processing
+
+ElevenLabs access is an optional browser permission (`api.elevenlabs.io`). Yappable asks for it only when you
+turn ElevenLabs on, and nothing is sent to ElevenLabs until you grant it.
 
 If you add an ElevenLabs API key and select ElevenLabs as the active voice engine, Yappable sends the final narration text (as it will be spoken) and voice settings to ElevenLabs to generate audio. Your ElevenLabs API key is stored in `chrome.storage.local` and is sent to ElevenLabs only for API authentication.
 
@@ -38,7 +48,7 @@ Optional affiliate links are outbound links. They do not send Lovable message te
 
 ## Data Deletion
 
-You can remove the ElevenLabs API key from the Yappable settings modal. You can also clear all Yappable settings and cached data by removing the extension or clearing the extension's stored data in Chrome.
+You can remove the ElevenLabs API key from the Yappable settings modal, and clear the audio cache and narration history there. You can also clear all Yappable settings and cached data by removing the extension or clearing the extension's stored data in Chrome.
 
 ## Limited Use
 

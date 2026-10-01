@@ -51,7 +51,10 @@
     elevenSpeed: 1.1, // velocidade (ElevenLabs aceita 0.7–1.2)
     elevenTextNormalization: "auto", // auto | on | off; "on" on Flash v2.5 requires Enterprise
     elevenSeedRandom: true, // true = sem seed fixo
-    elevenSeed: null // seed determinístico 0–4294967295
+    elevenSeed: null, // seed determinístico 0–4294967295
+    elevenCache: true, // cache persistente (IndexedDB, via background)
+    elevenHistory: true, // guarda texto + página no histórico do popup
+    elevenStream: true // toca enquanto o MP3 chega (/stream + MediaSource)
   };
 
   // modelos que aceitam language_code (Multilingual v2 auto-detecta)
@@ -690,11 +693,60 @@
       seed: cfg.elevenSeedRandom ? null : body.seed
     });
     let audioBuffer = _audioCache.get(cacheKey);
+
+    // Cache persistente (IndexedDB no background): sobrevive a reload e a outras abas,
+    // e o mesmo texto com a mesma voz/config nunca é gerado (nem cobrado) duas vezes.
+    const Store = globalThis.YapAudioStore;
+    let storeKey = "";
+    if (!audioBuffer && cfg.elevenCache && Store) {
+      try {
+        storeKey = await Store.keyFor({
+          text: sendText, voiceId: cfg.elevenVoiceId, model: cfg.elevenModel, format: fmtParam,
+          stability: voiceSettings.stability, similarity: voiceSettings.similarity_boost,
+          style: voiceSettings.style, speed: voiceSettings.speed, useSpeakerBoost: voiceSettings.use_speaker_boost,
+          normalization: body.apply_text_normalization, seed: body.seed, lang: body.language_code || ""
+        });
+        const hit = await chrome.runtime.sendMessage({ type: "YAP_CACHE_GET", key: storeKey });
+        if (hit && hit.hit && hit.b64) {
+          audioBuffer = Store.b64ToBuf(hit.b64);
+          storeKey = ""; // já está no cache persistente
+          if (_audioCache.size >= AUDIO_CACHE_MAX) _audioCache.delete(_audioCache.keys().next().value);
+          _audioCache.set(cacheKey, audioBuffer);
+        }
+      } catch (err) {
+        L.fallback("engine", "speakEleven", "cache persistente indisponível; seguindo para a API", { err });
+      }
+      if (epoch != null && !playbackCurrent(epoch)) return;
+    }
+
+    // Guarda o MP3 completo nos dois caches (memória + IndexedDB via background).
+    const rememberAudio = (buf) => {
+      if (_audioCache.size >= AUDIO_CACHE_MAX) {
+        _audioCache.delete(_audioCache.keys().next().value);
+      }
+      _audioCache.set(cacheKey, buf);
+      if (!storeKey) return;
+      try {
+        chrome.runtime.sendMessage({
+          type: "YAP_CACHE_PUT", key: storeKey, b64: Store.bufToB64(buf),
+          meta: {
+            text: sendText, voiceId: cfg.elevenVoiceId, model: cfg.elevenModel, format: fmtParam,
+            platform: "lovable", pageUrl: location.origin + location.pathname
+          }
+        }).catch(() => {});
+      } catch (_) { /* cache é best effort */ }
+    };
+
+    // Streaming: começa a tocar nos primeiros pedaços em vez de esperar o MP3 inteiro.
+    const Stream = globalThis.YapElevenStream;
+    const streaming = !audioBuffer && cfg.elevenStream && Stream && Stream.supported(fmtParam);
+    let stream = null;
+
     if (!audioBuffer) {
       // Params de geração (sem a chave — header redatado pelo logger de toda forma).
       const endDbg = L.start("engine", "speakEleven", "POST text-to-speech (ElevenLabs)", {
         voiceId: cfg.elevenVoiceId, model: cfg.elevenModel, format: fmtParam,
-        lang: body.language_code || null, chars: sendText.length
+        lang: body.language_code || null, chars: sendText.length, streaming
       });
       const controller = new AbortController();
       currentFetchController = controller;
@@ -707,7 +759,7 @@
       let res;
       try {
         res = await fetch(
-          `https://api.elevenlabs.io/v1/text-to-speech/${cfg.elevenVoiceId}?output_format=${fmtParam}`,
+          `https://api.elevenlabs.io/v1/text-to-speech/${cfg.elevenVoiceId}${streaming ? "/stream" : ""}?output_format=${fmtParam}`,
           {
             method: "POST",
             headers: {
@@ -731,10 +783,20 @@
           } catch (_) {}
           throw new Error(`ElevenLabs ${res.status}${apiDetail ? `: ${apiDetail}` : ""}`);
         }
-        // Keep the timeout active while consuming the body as well. A server can
-        // send headers and then stall before the MP3 is complete.
-        audioBuffer = await res.arrayBuffer();
-        endDbg("ok", { status: res.status, bytes: audioBuffer.byteLength });
+        if (streaming && res.body) {
+          // O corpo continua chegando depois daqui; só um travamento aborta o fetch.
+          stream = Stream.open(res, { onStall: () => controller.abort() });
+          stream.done.then(
+            (buf) => { rememberAudio(buf); L.info("engine", "speakEleven", "stream ElevenLabs concluído", { bytes: buf.byteLength }); },
+            (err) => L.fallback("engine", "speakEleven", "stream ElevenLabs interrompido", { err: errorInfo(err) })
+          );
+          endDbg("ok", { status: res.status, streaming: true });
+        } else {
+          // Keep the timeout active while consuming the body as well. A server can
+          // send headers and then stall before the MP3 is complete.
+          audioBuffer = await res.arrayBuffer();
+          endDbg("ok", { status: res.status, bytes: audioBuffer.byteLength });
+        }
         // Phase 5: mark key as verified on first successful TTS per session
         if (!_sessionVerified) { _sessionVerified = true; _setAuthStatus("valid"); }
       } catch (err) {
@@ -753,10 +815,7 @@
         clearTimeout(timeout);
         if (currentFetchController === controller) currentFetchController = null;
       }
-      if (_audioCache.size >= AUDIO_CACHE_MAX) {
-        _audioCache.delete(_audioCache.keys().next().value);
-      }
-      _audioCache.set(cacheKey, audioBuffer);
+      if (audioBuffer) rememberAudio(audioBuffer);
     } else {
       L.info("engine", "speakEleven", "áudio servido do cache (sem chamada de rede)", {
         bytes: audioBuffer.byteLength, chars: sendText.length
@@ -764,8 +823,10 @@
     }
     if (epoch != null && !playbackCurrent(epoch)) return;
 
-    const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
-    const url = URL.createObjectURL(blob);
+    if (stream && stream.failed) throw stream.failed;
+    const url = stream
+      ? stream.mediaUrl()
+      : URL.createObjectURL(new Blob([audioBuffer], { type: "audio/mpeg" }));
     let audio = null;
     await new Promise((resolve, reject) => {
       if (epoch != null && !playbackCurrent(epoch)) return resolve();
@@ -803,7 +864,7 @@
         _wfStartEleven(audio);
         armPlaybackTimeout();
         L.ok("playback", "speakEleven", "audio ElevenLabs tocando", {
-          bytes: audioBuffer.byteLength, volume: audio.volume, muted: audio.muted
+          bytes: audioBuffer ? audioBuffer.byteLength : null, streaming: !!stream, volume: audio.volume, muted: audio.muted
         });
       };
       const finish = (err) => {

@@ -13,6 +13,7 @@
 // Background-mode logger (IS_BG=true path in logger.js). Owns the run ring
 // and breadcrumb ring. importScripts resolved relative to src/.
 try { importScripts("logger.js"); } catch (_) {}
+try { importScripts("audio-store.js"); } catch (_) {}
 const L = globalThis.YapLog || {
   ok() {}, info() {}, fallback() {}, fail() {}, start: () => () => {},
   receive() {}, closeRun() {}
@@ -142,9 +143,42 @@ ensureAuth();
 ensureCurrentSpeechModel();
 
 // ============================================================================
+// ElevenLabs audio cache + history (IndexedDB in the extension origin).
+// Content scripts run in the lovable.dev origin, so they ask the worker.
+// Audio travels as base64: runtime messages are JSON-serialized.
+// Returns true when it owns the message (async sendResponse).
+// ============================================================================
+const CACHE_DEFAULTS = { elevenCache: true, elevenHistory: true };
+
+function handleCacheMessage(msg, sender, sendResponse) {
+  if (msg.type !== "YAP_CACHE_GET" && msg.type !== "YAP_CACHE_PUT") return false;
+  if (!sender || sender.id !== chrome.runtime.id) return false;
+  const Store = globalThis.YapAudioStore;
+  chrome.storage.sync.get(CACHE_DEFAULTS, async (st) => {
+    const miss = msg.type === "YAP_CACHE_GET" ? { hit: false } : { ok: false };
+    try {
+      if (!st.elevenCache || !Store) return sendResponse(miss);
+      if (msg.type === "YAP_CACHE_GET") {
+        const e = await Store.get(String(msg.key));
+        if (!e) return sendResponse(miss);
+        sendResponse({ hit: true, b64: Store.bufToB64(await e.audio.arrayBuffer()) });
+      } else {
+        const blob = new Blob([Store.b64ToBuf(msg.b64)], { type: "audio/mpeg" });
+        await Store.put({ ...msg.meta, key: String(msg.key), history: !!st.elevenHistory }, blob);
+        sendResponse({ ok: true });
+      }
+    } catch (err) {
+      L.fail("cache", msg.type, "falha no cache de áudio", { err });
+      sendResponse(miss);
+    }
+  });
+  return true;
+}
+
+// ============================================================================
 // Message router
 // ============================================================================
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg) return;
 
   // Phase 1: log sink — entries forwarded from content / popup contexts
@@ -155,6 +189,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
     return false;
   }
+
+  if (handleCacheMessage(msg, sender, sendResponse)) return true;
 
   // Tab count query from content scripts
   if (!msg.__yappable || msg.type !== "countLovableTabs") return;

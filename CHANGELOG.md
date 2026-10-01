@@ -6,6 +6,26 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and
 
 ---
 
+## [1.4.0] — 2026-10-01
+
+### Changed
+- The AI chats extension is now called **Yappable** (formerly Yappable for your AI).
+- `api.elevenlabs.io` is now an optional host permission, requested only when ElevenLabs is turned on.
+- `declarativeNetRequest` replaced by `declarativeNetRequestWithHostAccess`: the Lovable completion-sound
+  rule still applies through `lovable.dev` access, without the broad "block content" install warning.
+
+### Added
+- Streaming ElevenLabs playback (`/stream` + MediaSource): audio starts on the first chunks instead of
+  after the whole MP3, with any model (Flash v2.5, v3, v3 Conversational, v4, v4 Turbo). The finished MP3
+  still goes to the cache. Falls back to the full download for non-MP3 qualities or when MediaSource is
+  missing; a stalled stream (15 s without data) is aborted. Toggle: Settings → Stream audio.
+- Persistent ElevenLabs audio cache (IndexedDB, 50 MB, least-recently-used eviction): the same text with
+  the same voice and settings is never generated or billed twice, even after a reload.
+- Narration history in Settings: replay, download MP3, copy text, open source page, delete audio and
+  record independently. Toggles to turn the cache and the history off; buttons to clear them.
+
+---
+
 ## [1.3.0] — 2026-09-30
 
 ### Changed

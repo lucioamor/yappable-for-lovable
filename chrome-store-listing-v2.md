@@ -233,6 +233,6 @@ Lovable moves fast. Yappable makes sure you do too. 🚀
 
 **Lovable-only, lighter permissions.**
 
-- 🔒 **Only Lovable + ElevenLabs** — chat narration for ChatGPT, Claude, Gemini and Grok now lives in its own extension, Yappable for your AI.
+- 🔒 **Only Lovable + ElevenLabs** — chat narration for ChatGPT, Claude, Gemini and Grok now lives in its own extension, Yappable.
 - ⏹️ **Smarter Stop button** — grey when idle, red only while something is speaking.
 - 📊 **Daily stats** on the main screen (words, minutes, narrations).
