@@ -93,6 +93,13 @@ $("activate").addEventListener("click", async () => {
   const key = keyEl.value.trim();
   if (!key) return;
   activateEl.disabled = true;
+  // api.elevenlabs.io is an optional permission; ask now, inside the click gesture.
+  const granted = await self.YapTts.requestAccess();
+  if (!granted) {
+    setStatus("bad", "Permission denied. Allow access to api.elevenlabs.io to use ElevenLabs, or use the native voice.");
+    activateEl.disabled = false;
+    return;
+  }
   setStatus("", "Verifying key…");
   msg("");
 
@@ -140,7 +147,7 @@ $("activate").addEventListener("click", async () => {
   try {
     const result = await verifyFn(key);
     if (!result.valid) {
-      const reasons = { invalid_key: "Invalid API key — check and try again.", forbidden: "The key cannot list voices. Enable Voices read access in ElevenLabs and try again.", timeout: "Request timed out.", network_error: "Could not reach ElevenLabs. The key was saved; retry when the connection is available.", api_error: `API error (${result.status}). The key was saved.` };
+      const reasons = { no_permission: "ElevenLabs access was not granted.", invalid_key: "Invalid API key — check and try again.", forbidden: "The key cannot list voices. Enable Voices read access in ElevenLabs and try again.", timeout: "Request timed out.", network_error: "Could not reach ElevenLabs. The key was saved; retry when the connection is available.", api_error: `API error (${result.status}). The key was saved.` };
       setStatus("bad", reasons[result.reason] || "Verification failed.");
       activateEl.disabled = false;
       return;

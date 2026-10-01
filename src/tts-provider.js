@@ -15,10 +15,34 @@
   "use strict";
 
   const REQUEST_TIMEOUT_MS = 15000;
+  const ELEVEN_ORIGINS = ["https://api.elevenlabs.io/*"];
+
+  // api.elevenlabs.io is an optional host permission: it is requested only when
+  // the user turns ElevenLabs on, so installs that stay on the native voice never
+  // show the warning.
+  function hasAccess() {
+    return new Promise((resolve) => {
+      try {
+        if (typeof chrome === "undefined" || !chrome.permissions || !chrome.permissions.contains) return resolve(true);
+        chrome.permissions.contains({ origins: ELEVEN_ORIGINS }, (ok) => resolve(!chrome.runtime.lastError && !!ok));
+      } catch (_) { resolve(false); }
+    });
+  }
+
+  // Must be called synchronously from a user gesture (click handler), before any await.
+  function requestAccess() {
+    return new Promise((resolve) => {
+      try {
+        if (typeof chrome === "undefined" || !chrome.permissions || !chrome.permissions.request) return resolve(true);
+        chrome.permissions.request({ origins: ELEVEN_ORIGINS }, (ok) => resolve(!chrome.runtime.lastError && !!ok));
+      } catch (_) { resolve(false); }
+    });
+  }
 
   // Verify an ElevenLabs API key. Returns { valid, voices?, reason?, status? }.
   async function verify(apiKey) {
     if (!apiKey) return { valid: false, reason: "no_key" };
+    if (!(await hasAccess())) return { valid: false, reason: "no_permission" };
     const ctrl = new AbortController();
     const timeout = setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, REQUEST_TIMEOUT_MS);
     try {
@@ -47,7 +71,7 @@
   // Fetch ElevenLabs subscription quota via GET /v1/user.
   // Returns { tier, charLimit, charsUsed, resetAt } or null on failure.
   async function quota(apiKey) {
-    if (!apiKey) return null;
+    if (!apiKey || !(await hasAccess())) return null;
     const ctrl = new AbortController();
     const timeout = setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, REQUEST_TIMEOUT_MS);
     try {
@@ -71,5 +95,5 @@
     }
   }
 
-  root.YapTts = { verify, quota };
+  root.YapTts = { verify, quota, hasAccess, requestAccess };
 })(typeof self !== "undefined" ? self : globalThis);

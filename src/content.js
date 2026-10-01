@@ -51,7 +51,9 @@
     elevenSpeed: 1.1, // velocidade (ElevenLabs aceita 0.7–1.2)
     elevenTextNormalization: "auto", // auto | on | off; "on" on Flash v2.5 requires Enterprise
     elevenSeedRandom: true, // true = sem seed fixo
-    elevenSeed: null // seed determinístico 0–4294967295
+    elevenSeed: null, // seed determinístico 0–4294967295
+    elevenCache: true, // cache persistente (IndexedDB, via background)
+    elevenHistory: true // guarda texto + página no histórico do popup
   };
 
   // modelos que aceitam language_code (Multilingual v2 auto-detecta)
@@ -690,6 +692,32 @@
       seed: cfg.elevenSeedRandom ? null : body.seed
     });
     let audioBuffer = _audioCache.get(cacheKey);
+
+    // Cache persistente (IndexedDB no background): sobrevive a reload e a outras abas,
+    // e o mesmo texto com a mesma voz/config nunca é gerado (nem cobrado) duas vezes.
+    const Store = globalThis.YapAudioStore;
+    let storeKey = "";
+    if (!audioBuffer && cfg.elevenCache && Store) {
+      try {
+        storeKey = await Store.keyFor({
+          text: sendText, voiceId: cfg.elevenVoiceId, model: cfg.elevenModel, format: fmtParam,
+          stability: voiceSettings.stability, similarity: voiceSettings.similarity_boost,
+          style: voiceSettings.style, speed: voiceSettings.speed, useSpeakerBoost: voiceSettings.use_speaker_boost,
+          normalization: body.apply_text_normalization, seed: body.seed, lang: body.language_code || ""
+        });
+        const hit = await chrome.runtime.sendMessage({ type: "YAP_CACHE_GET", key: storeKey });
+        if (hit && hit.hit && hit.b64) {
+          audioBuffer = Store.b64ToBuf(hit.b64);
+          storeKey = ""; // já está no cache persistente
+          if (_audioCache.size >= AUDIO_CACHE_MAX) _audioCache.delete(_audioCache.keys().next().value);
+          _audioCache.set(cacheKey, audioBuffer);
+        }
+      } catch (err) {
+        L.fallback("engine", "speakEleven", "cache persistente indisponível; seguindo para a API", { err });
+      }
+      if (epoch != null && !playbackCurrent(epoch)) return;
+    }
+
     if (!audioBuffer) {
       // Params de geração (sem a chave — header redatado pelo logger de toda forma).
       const endDbg = L.start("engine", "speakEleven", "POST text-to-speech (ElevenLabs)", {
@@ -757,6 +785,17 @@
         _audioCache.delete(_audioCache.keys().next().value);
       }
       _audioCache.set(cacheKey, audioBuffer);
+      if (storeKey) {
+        try {
+          chrome.runtime.sendMessage({
+            type: "YAP_CACHE_PUT", key: storeKey, b64: Store.bufToB64(audioBuffer),
+            meta: {
+              text: sendText, voiceId: cfg.elevenVoiceId, model: cfg.elevenModel, format: fmtParam,
+              platform: "lovable", pageUrl: location.origin + location.pathname
+            }
+          }).catch(() => {});
+        } catch (_) { /* cache é best effort */ }
+      }
     } else {
       L.info("engine", "speakEleven", "áudio servido do cache (sem chamada de rede)", {
         bytes: audioBuffer.byteLength, chars: sendText.length

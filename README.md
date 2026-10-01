@@ -47,7 +47,7 @@ Reading is a commodity. Knowing *what's happening right now and where to look* i
 - **Animated waveform bar** — optional visual feedback at the top of the page while narrating (toggle in popup)
 - **Multi-tab awareness** — prefixes the project name when you've got more than one Lovable tab open
 - **100% local by default** — all processing runs in the browser; ElevenLabs is optional
-- **Scoped permissions** — activates only on Lovable (plus ElevenLabs when you add a key)
+- **Scoped permissions** — activates only on Lovable; ElevenLabs access is an optional permission, requested only when you turn it on
 
 ---
 

@@ -5,10 +5,12 @@
   "description": "Voice mode for Lovable: reads every build aloud, hands-free, in your language. Native or ElevenLabs voices.",
   "permissions": [
     "storage",
-    "declarativeNetRequest"
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
-    "https://lovable.dev/*",
+    "https://lovable.dev/*"
+  ],
+  "optional_host_permissions": [
     "https://api.elevenlabs.io/*"
   ],
   "declarative_net_request": {
@@ -41,6 +43,7 @@
       "js": [
         "src/logger.js",
         "src/tts-provider.js",
+        "src/audio-store.js",
         "src/stats.js",
         "src/risk-detector.js",
         "src/ir-builder.js",

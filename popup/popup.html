@@ -217,6 +217,11 @@
     button.act.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
     button.act.primary:hover { background: #fbbf24; border-color: #fbbf24; color: var(--bg); }
     button.ghost { background: var(--surface-2); color: var(--txt); }
+    .history-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 220px; overflow-y: auto; }
+    .history-list li { padding: 6px 0; border-top: 1px solid var(--border, #2a2a2a); font-size: 12px; }
+    .history-list .h-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history-list .h-meta { color: var(--muted); font-size: 10.5px; }
+    .history-list .h-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
     button.mini { flex: none; padding: 5px 9px; font-size: 12px; min-height: 28px; }
     small { color: var(--muted-2); font-size: 11px; }
     #msg { margin-top: 8px; min-height: 14px; color: var(--val); font-size: 11px; }
@@ -541,6 +546,22 @@
         <input type="number" id="elevenSeed" min="0" max="4294967295" step="1" placeholder="—" />
       </div>
 
+      <h3>Audio cache &amp; history</h3>
+      <div class="soundline-solo" title="Keep generated ElevenLabs audio on this device so the same text is never generated (or billed) twice.">
+        <label for="elevenCache">💾 Cache audio on this device</label>
+        <div class="switch"><input type="checkbox" id="elevenCache" /></div>
+      </div>
+      <div class="soundline-solo" title="List narrations (text, voice, page) so you can replay or download them. Off: new audio is cached without its text or page.">
+        <label for="elevenHistory">🕘 Keep narration history</label>
+        <div class="switch"><input type="checkbox" id="elevenHistory" /></div>
+      </div>
+      <div class="privacy-note" id="cacheUsage">Cache: empty</div>
+      <div class="btnrow">
+        <button class="act" id="clearAudioCache">Clear audio cache</button>
+        <button class="act" id="clearHistory">Clear history</button>
+      </div>
+      <ul id="historyList" class="history-list"></ul>
+
       <!-- Diagnostics: structured logging of every operation/hook -->
       <h3>Diagnostics</h3>
       <div class="inline" title="Logs every operation (DOM read, interpretation, engine/connection, playback) to the page console and captures them for download. Off = zero overhead.">
@@ -572,6 +593,8 @@
   <script src="../src/renderer.js"></script>
   <script src="../src/tts-provider.js"></script>
   <script src="../src/stats.js"></script>
+  <script src="../src/audio-store.js"></script>
   <script src="popup.js"></script>
+  <script src="history.js"></script>
 </body>
 </html>
