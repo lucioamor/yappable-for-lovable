@@ -104,7 +104,7 @@ speech shaping, and completion-sound interception.
 ## Looking for ChatGPT, Claude, Gemini or Grok?
 
 Reading those chats aloud is a separate extension,
-[Yappable for your AI](https://github.com/lucioamor/yappable-for-your-ai), so this one only needs access to Lovable.
+[Yappable](https://github.com/lucioamor/yappable), so this one only needs access to Lovable.
 
 ---
 
@@ -127,23 +127,27 @@ The copy used for the Chrome Web Store (name, short/detailed description, and "w
 ## File Structure
 
 ```
-yappable/
+yappable-for-lovable/
 ├── manifest.json           # Extension configuration
 ├── rules.json              # Declarative Net Request rule (blocks completion sound)
 ├── src/
-│   ├── background.js       # Service worker — tab counting, install seed
+│   ├── background.js       # Service worker — tab counting, install seed, audio cache
 │   ├── content.js          # Observer, gate, extraction, TTS, queue
 │   ├── inject.js           # MAIN world — intercepts fetch, emits completion signal
 │   ├── logger.js           # Structured debug logging
-│   ├── tts-provider.js     # ElevenLabs key verification and quota (shared with yappable-for-your-ai)
-│   ├── stats.js            # Local daily counters (shared with yappable-for-your-ai)
+│   ├── tts-provider.js     # ElevenLabs key verification and quota (shared with yappable)
+│   ├── stats.js            # Local daily counters (shared with yappable)
+│   ├── audio-store.js      # ElevenLabs audio cache + narration history, IndexedDB (shared with yappable)
+│   ├── eleven-stream.js    # Plays ElevenLabs /stream audio while it downloads (shared with yappable)
 │   ├── ir-builder.js       # Builds Intermediate Representation from agent output
 │   ├── renderer.js         # Renders IR → speakable text per narration mode
 │   ├── risk-detector.js    # Flags unvalidated metrics, copy, build, SEO changes
 │   └── silence-monitor.js  # Detects stalls and announces them via the narrator queue
 ├── popup/
 │   ├── popup.html          # Extension popup UI
-│   └── popup.js            # Popup logic and settings bridge
+│   ├── popup.js            # Popup logic and settings bridge
+│   ├── history.js          # Audio cache usage + narration history in Settings
+│   └── onboarding.*        # First-run setup
 ├── assets/
 │   └── single-sound-message-icq-ooh.mp3  # Notification cue sound
 ├── icons/                  # Extension icons (16, 32, 48, 128px)

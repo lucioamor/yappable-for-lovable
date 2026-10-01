@@ -41,7 +41,7 @@ test("manifest is scoped to Lovable, ElevenLabs is optional, with no chat-site l
   for (const entry of manifest.content_scripts) assert.deepEqual(entry.matches, ["https://lovable.dev/*"]);
   assert.doesNotMatch(JSON.stringify(manifest), /chatgpt|claude\.ai|gemini|grok/i);
   for (const gone of ["chat-adapters", "chat-narrator", "player-ui", "media-hook"]) {
-    assert.ok(!fs.existsSync(path.join(root, "src", `${gone}.js`)), `${gone}.js should live in yappable-for-your-ai`);
+    assert.ok(!fs.existsSync(path.join(root, "src", `${gone}.js`)), `${gone}.js should live in yappable (the AI chats extension)`);
   }
 });
 

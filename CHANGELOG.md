@@ -6,9 +6,10 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and
 
 ---
 
-## [Unreleased]
+## [1.4.0] — 2026-10-01
 
 ### Changed
+- The AI chats extension is now called **Yappable** (formerly Yappable for your AI).
 - `api.elevenlabs.io` is now an optional host permission, requested only when ElevenLabs is turned on.
 - `declarativeNetRequest` replaced by `declarativeNetRequestWithHostAccess`: the Lovable completion-sound
   rule still applies through `lovable.dev` access, without the broad "block content" install warning.
