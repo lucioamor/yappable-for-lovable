@@ -28,7 +28,8 @@ const DEFAULTS = {
   elevenSeedRandom: true,
   elevenSeed: null,
   elevenCache: true,
-  elevenHistory: true
+  elevenHistory: true,
+  elevenStream: true
 };
 
 // modelos que aceitam language_code (enforce). Multilingual v2 auto-detecta.
@@ -908,6 +909,7 @@ function reflectUI() {
   $("elevenSpeed").value = cfg.elevenSpeed; $("elevenSpeedOut").textContent = fmtSpeedPct(cfg.elevenSpeed);
   $("elevenTextNormalization").value = cfg.elevenTextNormalization;
   $("elevenSeedRandom").checked = cfg.elevenSeedRandom;
+  $("elevenStream").checked = cfg.elevenStream;
   $("elevenCache").checked = cfg.elevenCache;
   $("elevenHistory").checked = cfg.elevenHistory;
   $("elevenSeed").value = cfg.elevenSeed == null ? "" : cfg.elevenSeed;
@@ -1054,6 +1056,7 @@ bindToggle("errorAlertEnabled");
 bindToggle("verboseEnabled");
 bindToggle("waveformEnabled");
 bindToggle("elevenSeedRandom");
+bindToggle("elevenStream");
 bindToggle("elevenCache");
 bindToggle("elevenHistory");
 bindSelect("nativeVoice");

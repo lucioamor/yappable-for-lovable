@@ -469,3 +469,46 @@ test("audio base64 helpers round-trip", () => {
   assert.equal(back.length, bytes.length);
   assert.ok(back.every((v, i) => v === bytes[i]));
 });
+
+function loadStream(extra = {}) {
+  const context = { setTimeout, clearTimeout, Uint8Array, ...extra };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(root, "src", "eleven-stream.js"), "utf8"), context);
+  return context.YapElevenStream;
+}
+const bodyOf = (parts) => ({
+  body: new ReadableStream({ start(c) { for (const p of parts) c.enqueue(new Uint8Array(p)); c.close(); } })
+});
+
+test("ElevenLabs streaming is used only for MP3 formats with MediaSource support", () => {
+  const MediaSource = { isTypeSupported: (mime) => mime === "audio/mpeg" };
+  const S = loadStream({ MediaSource });
+  assert.equal(S.supported("mp3_44100_64"), true);
+  assert.equal(S.supported("pcm_16000"), false);
+  assert.equal(S.supported("opus_48000_64"), false);
+  assert.equal(loadStream().supported("mp3_44100_64"), false, "no MediaSource -> full download");
+});
+
+test("ElevenLabs stream keeps every chunk and resolves the complete MP3 for the cache", async () => {
+  const S = loadStream();
+  const s = S.open(bodyOf([[1, 2], [3], [4, 5, 6]]));
+  const buf = await s.done;
+  assert.deepEqual(Array.from(new Uint8Array(buf)), [1, 2, 3, 4, 5, 6]);
+  assert.equal(s.finished, true);
+  assert.equal(s.bytes, 6);
+});
+
+test("an empty ElevenLabs stream fails instead of playing silence", async () => {
+  const s = loadStream().open(bodyOf([]));
+  await assert.rejects(s.done);
+  assert.ok(s.failed);
+});
+
+test("a stalled ElevenLabs stream calls onStall", async () => {
+  let stalled = false;
+  let ctrl;
+  const res = { body: new ReadableStream({ start(c) { ctrl = c; c.enqueue(new Uint8Array([1])); } }) };
+  const s = loadStream().open(res, { stallMs: 20, onStall: () => { stalled = true; ctrl.error(new Error("aborted")); } });
+  await assert.rejects(s.done);
+  assert.equal(stalled, true);
+});
