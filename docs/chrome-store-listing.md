@@ -14,7 +14,7 @@ Yappable for Lovable: voice mode that reads chat & talks back
 ## Short description (max 132 chars)
 
 ```
-Lovable extension that talks back: reads every build aloud — what changed, why it matters, next steps. Hands-free voice updates.
+Voice mode for Lovable: reads every build aloud, hands-free, in your language. Native or ElevenLabs voices.
 ```
 
 > SEO note: the **name** and **short description** are the strongest ranking
@@ -68,33 +68,18 @@ the browser — your Lovable response text never leaves your machine on this pat
 ElevenLabs is optional; if enabled, only the final narration text is sent to
 generate audio, and your key is stored locally and never synced.
 
-Activates only on `lovable.dev` and makes no unnecessary network requests.
+Activates only on Lovable, and makes no
+unnecessary network requests.
 
 *Independent extension for Lovable builders. Not affiliated with, endorsed by,
 or sponsored by Lovable.*
 
 ---
 
-## What's new (v1.0.0)
+## What's new (v1.3.0)
 
-**Speaks your language, narrates live — now stable.**
+**Lovable-only, lighter permissions.**
 
-- 🌍 **Always in your language** — narration, live progress, and alerts are
-  translated on-device to the language you choose, no matter what Lovable
-  replies in.
-- 🎬 **Live play-by-play** — verbose mode reads the background-task widget step
-  by step as it happens, skipping near-duplicates, instead of waiting for the
-  final response.
-- 🔊 **Knows what Lovable is doing** — the silence monitor reads the real status
-  word ("Transcribing", "Generating") with elapsed time and task label.
-- 👋 **First-run onboarding** — clean full-screen setup: drop in an ElevenLabs
-  key (verified on the spot) for premium voice, or continue on the built-in
-  native voice in one click.
-- 🎚️ **Voice & engine overhaul** — Native / ElevenLabs badge in the popup,
-  language flag pill, native voices filtered to your language, better
-  ElevenLabs defaults.
-- 📊 **Animated waveform bar**, **↩ repeat button**, and **instant stop** across
-  every Lovable tab.
-- 🛠️ **Stability & polish** — transparent toolbar icon, network timeouts so
-  setup and audio never get stuck, a native-narration stall fix, locally
-  bundled language flags (works offline), and a dependency-free QA suite.
+- 🔒 **Only Lovable + ElevenLabs** — chat narration for ChatGPT, Claude, Gemini and Grok now lives in its own extension, Yappable for your AI.
+- ⏹️ **Smarter Stop button** — grey when idle, red only while something is speaking.
+- 📊 **Daily stats** on the main screen (words, minutes, narrations).

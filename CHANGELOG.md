@@ -6,27 +6,28 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and
 
 ---
 
-## [Unreleased]
+## [1.3.0] — 2026-09-30
+
+### Changed
+- Yappable for Lovable is Lovable-only again. Reading ChatGPT, Claude, Gemini and Grok replies moved
+  to its own extension, **Yappable for your AI**, so this one asks for no chat-site access. Permissions
+  are now `lovable.dev` and `api.elevenlabs.io`.
+- The daily statistics strip (words, minutes, narrations) now sits on the main popup screen.
+- The Stop button stays grey while nothing plays and turns red only while a Lovable tab is making sound.
+- Store and manifest descriptions cover Lovable only.
+
+### Fixed
+- ElevenLabs setup saves the API key before remote verification, uses the current v2 voices endpoint,
+  and selects a voice actually available to the account instead of assuming a legacy default voice ID.
+- The settings panel has an explicit **Save & verify key** action, so saving no longer depends on the
+  password field losing focus.
+- Flash v2.5 no longer forces the Enterprise-only text-normalization mode, preventing HTTP 400
+  followed by an unnoticed fallback to the browser's native voice.
 
 ### Added
-- Chat narration on claude.ai and chatgpt.com (`src/chat-adapters.js`, `src/chat-narrator.js`):
-  reads each finished assistant reply aloud (code blocks and citation chips stripped).
-  Full reply is always spoken (no length cap). Sync keys `chatNarration` (default on) and
-  `chatVoiceMode`: "site" clicks the site's own read-aloud, "yappable" runs the on-device
-  interpretation layer + ElevenLabs (or system voice).
-- Gemini support (gemini.google.com): reply detection and the native "Ouvir" voice.
-- Grok support (grok.com): reply detection (its stop button ends before the answer starts, so the
-  end is detected by the text settling) and the native "Ler em voz alta". Grok's audio stream is
-  not seekable, so the player greys out −15/+15 whenever the element reports no seekable range.
-- Spoken prefix before every chat reply ("Resposta do Claude:", "Resposta do Gemini:", localized;
-  sync key `chatAnnounce`, default on). On Claude and Gemini `media-hook.js` rewrites the text
-  the site sends to its own TTS, so the site's voice also reads the on-device summary when
-  `mode` isn't `completo`. ChatGPT sends no text to its TTS, so Site mode reads it unchanged.
-- Universal player modal (`src/player-ui.js`) with play/pause, ±15 s, speed 0.5–3×
-  (remembered as `playerRate`) and shortcuts Alt+K / Alt+J / Alt+L / Alt+, / Alt+. / Alt+0 / Esc.
-- `src/media-hook.js` (MAIN world) makes the sites' native TTS controllable: adopts
-  ChatGPT's `<audio>`, captures Claude's Web Audio stream into a seekable WAV player.
-  DOM and audio notes in `docs/CHAT-SITES-DOM.md`.
+- Eleven v4, v4 Turbo and v3 Conversational are available in model selection; deprecated Turbo v2.5
+  was removed, and expressive v3/v4 models use audio-tag-safe shaping.
+- Local daily narration statistics (words, estimated minutes, narration count).
 
 ---
 
@@ -109,6 +110,8 @@ Initial public release.
 - **Silence monitor**, error alert chime, verbose mode, and multi-tab awareness (project name is announced when more than one Lovable tab is open).
 - Activates only on `lovable.dev` and makes no unnecessary network requests.
 
+[1.2.0]: https://github.com/lucioamor/yappable-for-lovable
+[1.1.0]: https://github.com/lucioamor/yappable-for-lovable
 [1.0.0]: https://github.com/lucioamor/yappable-for-lovable
 [0.2.0]: https://github.com/lucioamor/yappable-for-lovable
 [0.1.0]: https://github.com/lucioamor/yappable-for-lovable

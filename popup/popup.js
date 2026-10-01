@@ -1,5 +1,6 @@
 const DEFAULTS = {
   enabled: true,
+  lovableEnabled: true,
   engine: "native", // "native" | "elevenlabs"
   lang: "auto", // "auto" = detect from browser, fallback en-US (resolved by resolveLang)
   rate: 1.05,
@@ -23,13 +24,13 @@ const DEFAULTS = {
   elevenSimilarity: 0.2,
   elevenStyle: 0.5,
   elevenSpeed: 1.1,
-  elevenTextNormalization: "on",
+  elevenTextNormalization: "auto",
   elevenSeedRandom: true,
   elevenSeed: null
 };
 
 // modelos que aceitam language_code (enforce). Multilingual v2 auto-detecta.
-const LANG_MODELS = /turbo_v2_5|flash_v2_5|eleven_v3/;
+const LANG_MODELS = /flash_v2_5|eleven_v3|eleven_v4/;
 const langCode = (l) => (l || "").split("-")[0];
 
 // idiomas: [BCP-47, country-code exibido localmente, nome].
@@ -86,6 +87,7 @@ const VOICE_CACHE_KEY = "elevenVoicesCache"; // chrome.storage.local: { key, at,
 const LAST_OUTPUT_KEY = "lovableNarratorLastOutput";
 const REQUEST_TIMEOUT_MS = 15000;
 const MAX_DELAY_MS = 3000;
+const LOVABLE_URLS = ["https://lovable.dev/*"];
 const MODES = ["fast", "beginner", "advanced", "completo"];
 const LEGACY_TO_MODE = {
   raw: "completo", full: "completo", technical: "completo",
@@ -191,9 +193,9 @@ function reflectEnabledState() {
   document.body.classList.toggle("narr-off", !on);
 }
 
-function stopAllTabs() {
+function stopTabs(urls = LOVABLE_URLS) {
   if (!chrome.tabs?.query) return;
-  chrome.tabs.query({ url: "https://lovable.dev/*" }, (tabs) => {
+  chrome.tabs.query({ url: urls }, (tabs) => {
     for (const tab of tabs || []) {
       if (!tab?.id) continue;
       chrome.tabs.sendMessage(tab.id, { type: "LN_STOP_NOW" }, () => void chrome.runtime.lastError);
@@ -203,7 +205,13 @@ function stopAllTabs() {
 
 $("enabled").addEventListener("change", () => {
   reflectEnabledState();
-  if (!$("enabled").checked) stopAllTabs();
+  if (!$("enabled").checked) stopTabs();
+});
+$("stopBtn").addEventListener("click", () => {
+  stopAll();
+  stopTabs();
+  setTimeout(refreshStopState, 300);
+  msg("Audio stopped.");
 });
 
 // engine
@@ -599,20 +607,104 @@ $("openSettings").addEventListener("click", () => {
   $("settingsModal").hidden = false;
   refreshLogCount();
 });
+function loadTodayStats() {
+  const key = globalThis.YapStats ? globalThis.YapStats.dayKey() : new Date().toISOString().slice(0, 10);
+  chrome.storage.local.get({ yappableStatsV1: { v: 1, days: {} } }, (st) => {
+    const day = st.yappableStatsV1?.days?.[key] || { words: 0, seconds: 0, narrations: 0 };
+    $("statsWords").textContent = Math.round(day.words || 0).toLocaleString();
+    $("statsMinutes").textContent = Math.round((day.seconds || 0) / 60).toLocaleString();
+    $("statsNarrations").textContent = Math.round(day.narrations || 0).toLocaleString();
+  });
+}
+// Stop button: grey when idle, red only while a Yappable tab is making sound.
+function refreshStopState() {
+  if (!chrome.tabs?.query) return;
+  chrome.tabs.query({ url: LOVABLE_URLS, audible: true }, (tabs) => {
+    void chrome.runtime.lastError;
+    const live = Array.isArray(tabs) && tabs.length > 0;
+    $("stopBtn").classList.toggle("live", live);
+    $("stopBtn").title = live ? "Stop audio" : "Nothing playing";
+  });
+}
+loadTodayStats();
+refreshStopState();
+setInterval(refreshStopState, 700);
+if (chrome.tabs?.onUpdated) chrome.tabs.onUpdated.addListener((_id, change) => { if ("audible" in change) refreshStopState(); });
 $("settingsClose").addEventListener("click", () => { $("settingsModal").hidden = true; });
 $("settingsModal").addEventListener("click", (e) => { if (e.target === $("settingsModal")) $("settingsModal").hidden = true; });
 $("keyReveal").addEventListener("click", () => {
   const el = $("elevenKey");
   el.type = el.type === "password" ? "text" : "password";
 });
-$("elevenKey").addEventListener("change", () => {
+async function saveAndVerifyElevenKey() {
   const k = $("elevenKey").value.trim();
   const changed = k !== cfg.elevenKey;
   set("elevenKey", k);
   reflectKeyStatus();
   L.info("config", "elevenKey", "chave ElevenLabs atualizada", { hasKey: !!k, changed });
-  if (k && changed) loadElevenVoices(true);
-  else if (k) loadElevenVoices(false);
+  if (!k) {
+    msg("ElevenLabs key removed.");
+    return;
+  }
+
+  const button = $("saveElevenKey");
+  button.disabled = true;
+  cfg._authStatus = "verifying";
+  reflectKeyStatus();
+  msg("Key saved locally. Verifying…");
+  try {
+    const result = await globalThis.YapTts.verify(k);
+    if (!result.valid) {
+      const status = result.reason === "invalid_key" || result.reason === "forbidden" ? "invalid" : "network_error";
+      cfg._authStatus = status;
+      chrome.storage.local.get({ auth: null }, (st) => {
+        const auth = st.auth || { v: 1, activeEngine: cfg.engine || "native", providers: {} };
+        if (!auth.providers) auth.providers = {};
+        if (!auth.providers.elevenlabs) auth.providers.elevenlabs = {};
+        auth.providers.elevenlabs.status = status;
+        chrome.storage.local.set({ auth });
+      });
+      reflectKeyStatus();
+      msg(result.reason === "invalid_key"
+        ? "Key saved, but ElevenLabs rejected it."
+        : result.reason === "forbidden"
+          ? "Key saved, but it cannot list voices. Enable Voices read access."
+          : "Key saved. Verification could not reach ElevenLabs.");
+      return;
+    }
+
+    const voices = result.voices || [];
+    const now = Date.now();
+    chrome.storage.local.get({ auth: null }, (st) => {
+      const auth = st.auth || { v: 1, activeEngine: cfg.engine || "native", providers: {} };
+      if (!auth.providers) auth.providers = {};
+      auth.providers.elevenlabs = {
+        credential: { type: "apiKey", value: k, addedAt: now, lastVerifiedAt: now },
+        status: "valid",
+        account: auth.providers.elevenlabs?.account || null,
+        voices,
+        voicesAt: now
+      };
+      chrome.storage.local.set({
+        auth,
+        [VOICE_CACHE_KEY]: { key: k, at: now, voices }
+      });
+    });
+    cfg._authStatus = "valid";
+    reflectKeyStatus();
+    populateElevenVoices(voices);
+    msg(`Key saved and verified — ${voices.length} voices available.`);
+  } catch (e) {
+    cfg._authStatus = "network_error";
+    reflectKeyStatus();
+    msg("Key saved. Verification failed: " + (e && e.message || String(e)));
+  } finally {
+    button.disabled = false;
+  }
+}
+$("saveElevenKey").addEventListener("click", saveAndVerifyElevenKey);
+$("elevenKey").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") saveAndVerifyElevenKey();
 });
 
 // ---------------------------------------------------------------------------
@@ -674,7 +766,7 @@ async function fetchElevenVoices() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch("https://api.elevenlabs.io/v1/voices", {
+    const res = await fetch("https://api.elevenlabs.io/v2/voices?page_size=100", {
       headers: { "xi-api-key": cfg.elevenKey },
       signal: controller.signal
     });
@@ -709,7 +801,7 @@ function loadElevenVoices(force) {
       return;
     }
     msg("Loading voices…");
-    const endDbg = L.start("engine", "loadElevenVoices", "GET /v1/voices (ElevenLabs)", { force });
+    const endDbg = L.start("engine", "loadElevenVoices", "GET /v2/voices (ElevenLabs)", { force });
     try {
       const voices = await fetchElevenVoices();
       chrome.storage.local.set({ [VOICE_CACHE_KEY]: { key: cfg.elevenKey, at: Date.now(), voices } });

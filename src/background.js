@@ -38,10 +38,12 @@ function pickLang(ui) {
 
 const INSTALL_SEED = {
   enabled: true,
+  lovableEnabled: true,
   verboseEnabled: false,
   mode: "beginner",
   cueEnabled: true,
-  errorAlertEnabled: true
+  errorAlertEnabled: true,
+  waveformEnabled: true
 };
 
 // ============================================================================
@@ -93,6 +95,14 @@ function ensureAuth() {
   });
 }
 
+function ensureCurrentSpeechModel() {
+  chrome.storage.sync.get({ elevenModel: "eleven_flash_v2_5" }, (st) => {
+    if (st.elevenModel === "eleven_turbo_v2_5" || st.elevenModel === "eleven_turbo_v2") {
+      chrome.storage.sync.set({ elevenModel: "eleven_flash_v2_5" });
+    }
+  });
+}
+
 // ============================================================================
 // onInstalled
 // ============================================================================
@@ -129,6 +139,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 // Also ensure auth on startup (handles first run after update without reinstall)
 ensureAuth();
+ensureCurrentSpeechModel();
 
 // ============================================================================
 // Message router

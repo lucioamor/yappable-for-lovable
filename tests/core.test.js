@@ -31,9 +31,44 @@ test("manifest is internally consistent", () => {
   }
 });
 
+test("manifest is scoped to Lovable and ElevenLabs only, with no chat-site leftovers", () => {
+  const hosts = manifest.host_permissions.map((h) => h.replace(/^https:\/\/|\/\*$/g, "")).sort();
+  assert.deepEqual(hosts, ["api.elevenlabs.io", "lovable.dev"]);
+  for (const entry of manifest.content_scripts) assert.deepEqual(entry.matches, ["https://lovable.dev/*"]);
+  assert.doesNotMatch(JSON.stringify(manifest), /chatgpt|claude\.ai|gemini|grok/i);
+  for (const gone of ["chat-adapters", "chat-narrator", "player-ui", "media-hook"]) {
+    assert.ok(!fs.existsSync(path.join(root, "src", `${gone}.js`)), `${gone}.js should live in yappable-for-your-ai`);
+  }
+});
+
 test("changelog contains the manifest release", () => {
   const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
   assert.match(changelog, new RegExp(`\\[${manifest.version.replaceAll(".", "\\.")}\\]`));
+});
+
+test("ElevenLabs verification uses the current voices endpoint and distinguishes forbidden keys", async () => {
+  let requestedUrl = "";
+  const context = {
+    AbortController,
+    clearTimeout,
+    setTimeout,
+    fetch: async (url) => {
+      requestedUrl = url;
+      return { ok: false, status: 403 };
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(root, "src", "tts-provider.js"), "utf8"), context);
+  const result = await context.YapTts.verify("test-key");
+  assert.equal(requestedUrl, "https://api.elevenlabs.io/v2/voices?page_size=100");
+  assert.equal(result.reason, "forbidden");
+});
+
+test("Flash v2.5 defaults to API-safe automatic text normalization", () => {
+  for (const relative of ["popup/popup.js", "src/content.js"]) {
+    const source = fs.readFileSync(path.join(root, relative), "utf8");
+    assert.match(source, /elevenTextNormalization:\s*"auto"/, relative);
+  }
 });
 
 test("default popup does not load remote executable or flag assets", () => {
@@ -116,6 +151,9 @@ test("speech shaping never leaks ElevenLabs markup to native speech", () => {
   assert.equal(v3.family, "v3tags");
   assert.match(v3.eleven.text, /\[long pause\]/);
   assert.doesNotMatch(v3.eleven.text, /<break/);
+  assert.equal(speech.familyOf("eleven_v3_conversational"), "v3tags");
+  assert.equal(speech.familyOf("eleven_v4"), "v3tags");
+  assert.equal(speech.familyOf("eleven_v4_turbo"), "v3tags");
 });
 
 test("injected completion interceptor silences the sound and preserves other fetches", async () => {
@@ -177,6 +215,7 @@ test("background seeds defaults, opens onboarding once, and counts project tabs"
         sync: {
           get: (keys, cb) => {
             if (Array.isArray(keys)) cb({});
+            else if (Object.prototype.hasOwnProperty.call(keys, "elevenModel")) cb({ elevenModel: "eleven_turbo_v2_5" });
             else cb({ lang: "" });
           },
           set: (value) => syncWrites.push(value)
@@ -194,6 +233,7 @@ test("background seeds defaults, opens onboarding once, and counts project tabs"
   onInstalled({ reason: "install" });
   assert.ok(syncWrites.some((value) => value.lang === "pt-BR"));
   assert.ok(syncWrites.some((value) => value.enabled === true && value.mode === "beginner"));
+  assert.ok(syncWrites.some((value) => value.elevenModel === "eleven_flash_v2_5"));
   assert.equal(createdTabs.length, 1);
   assert.equal(createdTabs[0].url, "chrome-extension://test/popup/onboarding.html");
 
@@ -207,7 +247,7 @@ test("background seeds defaults, opens onboarding once, and counts project tabs"
   assert.equal(response.count, 2);
 });
 
-test("popup loads a local ElevenLabs key after sync settings without race", () => {
+test("popup loads and explicitly saves a local ElevenLabs key", async () => {
   class FakeClassList {
     constructor() { this.values = new Set(); }
     toggle(name, force) {
@@ -265,6 +305,7 @@ test("popup loads a local ElevenLabs key after sync settings without race", () =
     fetch: async () => { throw new Error("unexpected network call"); },
     navigator: { language: "en-US", languages: ["en-US"] },
     setTimeout,
+    setInterval: () => 0,
     speechSynthesis: {
       cancel() {}, getVoices() { return []; }, pause() {}, resume() {}, speak() {}
     },
@@ -311,4 +352,68 @@ test("popup loads a local ElevenLabs key after sync settings without race", () =
   assert.equal(element("elevenVoiceId").options.length, 1);
   assert.equal(element("elevenVoiceId").options[0].value, "v1");
   assert.equal(storageEvents.some(([type, value]) => type === "remove-sync" && value === "elevenKey"), false);
+
+  context.YapTts = { verify: async () => ({ valid: false, reason: "network_error" }) };
+  element("elevenKey").value = "new-local-secret";
+  await element("saveElevenKey").listeners.click();
+  assert.ok(storageEvents.some(([type, value]) => type === "set-local" && value.elevenKey === "new-local-secret"));
+  assert.match(element("msg").textContent, /Key saved/);
+});
+
+test("onboarding saves the ElevenLabs key before verification completes", async () => {
+  const elements = new Map();
+  const element = (id) => {
+    if (!elements.has(id)) {
+      elements.set(id, {
+        value: "", disabled: false, hidden: false, type: "password",
+        textContent: "", className: "", style: {}, listeners: {},
+        addEventListener(type, fn) { this.listeners[type] = fn; }
+      });
+    }
+    return elements.get(id);
+  };
+  const localWrites = [];
+  const context = {
+    AbortController,
+    clearTimeout,
+    setTimeout,
+    document: { getElementById: element },
+    chrome: {
+      runtime: { lastError: null },
+      storage: {
+        local: { set: (value, cb) => { localWrites.push(value); if (cb) cb(); } },
+        sync: { set: (_value, cb) => { if (cb) cb(); } }
+      },
+      tabs: {}
+    },
+    YapTts: { verify: async () => ({ valid: false, reason: "network_error" }) }
+  };
+  context.self = context;
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(root, "popup", "onboarding.js"), "utf8"), context);
+
+  element("key").value = "onboarding-secret";
+  await element("activate").listeners.click();
+  assert.ok(localWrites.some((value) => value.elevenKey === "onboarding-secret"));
+  assert.equal(localWrites.find((value) => value.elevenKey === "onboarding-secret").auth.providers.elevenlabs.status, "verifying");
+  assert.match(element("statusTxt").textContent, /saved/);
+});
+
+test("current ElevenLabs speech models are visible and deprecated Turbo v2.5 is removed", () => {
+  const html = fs.readFileSync(path.join(root, "popup", "popup.html"), "utf8");
+  for (const id of ["eleven_v4", "eleven_v4_turbo", "eleven_v3", "eleven_v3_conversational", "eleven_multilingual_v2", "eleven_flash_v2_5"]) {
+    assert.match(html, new RegExp(`value=["']${id}["']`));
+  }
+  assert.doesNotMatch(html, /value=["']eleven_turbo_v2_5["']/);
+});
+
+test("stop button is grey until Lovable audio plays", () => {
+  const html = fs.readFileSync(path.join(root, "popup", "popup.html"), "utf8");
+  assert.match(html, /\.stop-btn\.live \{[^}]*var\(--danger\)/);
+  assert.doesNotMatch(html, /\.stop-btn \{[^}]*color: var\(--danger\)/);
+  assert.doesNotMatch(html.replace(/<a id="crossPromo"[\s\S]*?<\/a>/, ""), /tabPlatforms|viewPlatforms|chatgpt|claude|gemini|grok/i);
+  assert.match(html, /<a id="crossPromo"[^>]*\bhidden\b/);
+  const js = fs.readFileSync(path.join(root, "popup", "popup.js"), "utf8");
+  assert.match(js, /audible: true/);
+  assert.match(js, /LOVABLE_URLS/);
 });

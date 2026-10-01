@@ -22,11 +22,12 @@
     const ctrl = new AbortController();
     const timeout = setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, REQUEST_TIMEOUT_MS);
     try {
-      const res = await fetch("https://api.elevenlabs.io/v1/voices", {
+      const res = await fetch("https://api.elevenlabs.io/v2/voices?page_size=100", {
         headers: { "xi-api-key": apiKey },
         signal: ctrl.signal
       });
       if (res.status === 401) return { valid: false, reason: "invalid_key", status: 401 };
+      if (res.status === 403) return { valid: false, reason: "forbidden", status: 403 };
       if (!res.ok) return { valid: false, reason: "api_error", status: res.status };
       const data = await res.json();
       const voices = (data.voices || []).map((v) => ({
