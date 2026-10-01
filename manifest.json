@@ -1,16 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Yappable for Lovable: voice mode that reads chat & talks back",
-  "version": "1.0.0",
-  "description": "Lovable extension that talks back: reads every build aloud — what changed, why it matters, next steps. Hands-free voice updates.",
-  "permissions": ["storage", "declarativeNetRequest"],
+  "version": "1.3.0",
+  "description": "Voice mode for Lovable: reads every build aloud, hands-free, in your language. Native or ElevenLabs voices.",
+  "permissions": [
+    "storage",
+    "declarativeNetRequest"
+  ],
   "host_permissions": [
     "https://lovable.dev/*",
-    "https://claude.ai/*",
-    "https://chatgpt.com/*",
-    "https://chat.openai.com/*",
-    "https://gemini.google.com/*",
-    "https://grok.com/*",
     "https://api.elevenlabs.io/*"
   ],
   "declarative_net_request": {
@@ -27,25 +25,29 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://lovable.dev/*"],
-      "js": ["src/inject.js"],
+      "matches": [
+        "https://lovable.dev/*"
+      ],
+      "js": [
+        "src/inject.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["https://lovable.dev/*"],
-      "js": ["src/logger.js", "src/tts-provider.js", "src/risk-detector.js", "src/ir-builder.js", "src/renderer.js", "src/silence-monitor.js", "src/content.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://claude.ai/*", "https://chatgpt.com/*", "https://chat.openai.com/*", "https://gemini.google.com/*", "https://grok.com/*"],
-      "js": ["src/media-hook.js"],
-      "run_at": "document_start",
-      "world": "MAIN"
-    },
-    {
-      "matches": ["https://claude.ai/*", "https://chatgpt.com/*", "https://chat.openai.com/*", "https://gemini.google.com/*", "https://grok.com/*"],
-      "js": ["src/chat-adapters.js", "src/player-ui.js", "src/chat-narrator.js"],
+      "matches": [
+        "https://lovable.dev/*"
+      ],
+      "js": [
+        "src/logger.js",
+        "src/tts-provider.js",
+        "src/stats.js",
+        "src/risk-detector.js",
+        "src/ir-builder.js",
+        "src/renderer.js",
+        "src/silence-monitor.js",
+        "src/content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
@@ -61,8 +63,12 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["assets/single-sound-message-icq-ooh.mp3"],
-      "matches": ["https://lovable.dev/*"]
+      "resources": [
+        "assets/single-sound-message-icq-ooh.mp3"
+      ],
+      "matches": [
+        "https://lovable.dev/*"
+      ]
     }
   ]
 }

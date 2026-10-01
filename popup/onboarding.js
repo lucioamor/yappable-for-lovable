@@ -65,6 +65,29 @@ function finish() {
   });
 }
 
+function savePendingKey(key) {
+  const now = Date.now();
+  const auth = {
+    v: AUTH_V,
+    activeEngine: "native",
+    providers: {
+      elevenlabs: {
+        credential: { type: "apiKey", value: key, addedAt: now, lastVerifiedAt: null },
+        status: "verifying",
+        account: null,
+        voices: [],
+        voicesAt: null
+      }
+    }
+  };
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set({ elevenKey: key, auth }, () => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve();
+    });
+  });
+}
+
 // Phase 6: write auth object (Phase 5) using TtsProvider.verify() (Phase 4).
 $("activate").addEventListener("click", async () => {
   const key = keyEl.value.trim();
@@ -72,6 +95,16 @@ $("activate").addEventListener("click", async () => {
   activateEl.disabled = true;
   setStatus("", "Verifying key…");
   msg("");
+
+  // Persist first so a transient API/CORS outage never discards what the user
+  // entered. ElevenLabs is activated only after verification succeeds.
+  try {
+    await savePendingKey(key);
+  } catch (e) {
+    setStatus("bad", "Could not save the API key: " + (e && e.message || String(e)));
+    activateEl.disabled = false;
+    return;
+  }
 
   // Phase 4: use YapTts.verify() if available; fall back to inline fetch
   let verifyFn;
@@ -83,11 +116,12 @@ $("activate").addEventListener("click", async () => {
       const ctrl = new AbortController();
       const timeout = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
       try {
-        const res = await fetch("https://api.elevenlabs.io/v1/voices", {
+        const res = await fetch("https://api.elevenlabs.io/v2/voices?page_size=100", {
           headers: { "xi-api-key": k },
           signal: ctrl.signal
         });
         if (res.status === 401) return { valid: false, reason: "invalid_key", status: 401 };
+        if (res.status === 403) return { valid: false, reason: "forbidden", status: 403 };
         if (!res.ok) throw new Error("HTTP " + res.status);
         const data = await res.json();
         const voices = (data.voices || []).map((v) => ({
@@ -106,13 +140,18 @@ $("activate").addEventListener("click", async () => {
   try {
     const result = await verifyFn(key);
     if (!result.valid) {
-      const reasons = { invalid_key: "Invalid API key — check and try again.", timeout: "Request timed out.", network_error: "Could not reach ElevenLabs.", api_error: `API error (${result.status}).` };
+      const reasons = { invalid_key: "Invalid API key — check and try again.", forbidden: "The key cannot list voices. Enable Voices read access in ElevenLabs and try again.", timeout: "Request timed out.", network_error: "Could not reach ElevenLabs. The key was saved; retry when the connection is available.", api_error: `API error (${result.status}). The key was saved.` };
       setStatus("bad", reasons[result.reason] || "Verification failed.");
       activateEl.disabled = false;
       return;
     }
 
     const voices = result.voices || [];
+    if (!voices.length) {
+      setStatus("bad", "Key verified, but no voices are available to this key. The key was saved.");
+      activateEl.disabled = false;
+      return;
+    }
     setStatus("ok", `Key verified — ${voices.length} voices available.`);
 
     // Phase 6: fetch quota to show in UI and store in auth
@@ -156,7 +195,9 @@ $("activate").addEventListener("click", async () => {
         activateEl.disabled = false;
         return;
       }
-      chrome.storage.sync.set({ engine: "elevenlabs" }, () => {
+      // A hard-coded legacy default voice may not exist for newer accounts.
+      // Persist a voice actually returned for this key before enabling TTS.
+      chrome.storage.sync.set({ engine: "elevenlabs", elevenVoiceId: voices[0].id }, () => {
         if (chrome.runtime.lastError) {
           setStatus("bad", "Could not activate ElevenLabs: " + chrome.runtime.lastError.message);
           activateEl.disabled = false;
