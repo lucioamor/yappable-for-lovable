@@ -48,7 +48,7 @@
     elevenStability: 0.2, // 0–1
     elevenSimilarity: 0.2, // similarity_boost 0–1
     elevenStyle: 0.5, // style exaggeration 0–1 (v2+)
-    elevenSpeed: 1.1, // velocidade (REST 0.7–1.2)
+    elevenSpeed: 1.1, // velocidade (ElevenLabs aceita 0.7–1.2)
     elevenTextNormalization: "auto", // auto | on | off; "on" on Flash v2.5 requires Enterprise
     elevenSeedRandom: true, // true = sem seed fixo
     elevenSeed: null // seed determinístico 0–4294967295
@@ -659,7 +659,8 @@
       stability: cfg.elevenStability,
       similarity_boost: cfg.elevenSimilarity,
       style: cfg.elevenStyle,
-      speed: cfg.elevenSpeed,
+      // ElevenLabs só aceita speed em 0.7–1.2; fora disso a API devolve 400.
+      speed: clamp(cfg.elevenSpeed, 0.7, 1.2),
       // Speaker boost fixo em false (não vem mais de config): melhora a latência
       // do ElevenLabs. NÃO reintroduzir como opção configurável nem remover esta linha.
       use_speaker_boost: false
